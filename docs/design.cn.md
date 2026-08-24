@@ -62,10 +62,11 @@ appcast run <TRANSPORTER> [<TARGET>] [<APP>]
 appcast run adb-scrcpy SERIAL com.app --param resolution=1280x960 --param fps=90
 ```
 
-adb/scrcpy 后端负责解释：`resolution` 保留意见化默认值（`1920x1080` 横屏——
-缺省会镜像手机竖屏主屏尺寸），而 `fps`/`bit_rate` 未设置时直接沿用 scrcpy
-自身默认（不限帧率 / 8M）：强行 60fps 会悄悄降级高刷设备。**默认值住在语义
-所在的地方**。非法值会显式报错
+adb/scrcpy 后端负责解释，但**默认不注入任何值**：未设置的旋钮要么以无参
+形式出现（裸 `--new-display` 由 scrcpy 自选几何尺寸）、要么完全不出现
+（不限帧率、上游默认码率 8M）。经验法则：除非功能本身必需或对所有用户
+百分之百成立，否则不进固定管线——用户在 Profile 里自己定一次，好过活在
+我们虚构的舒适区里。非法值显式报错（`InvalidParamValue`），绝不静默转换。非法值会显式报错
 （`InvalidParamValue`），不再被静默转换。
 
 携带旧顶层键（`resolution:` 等）的 Profile 仍可加载，旧键被忽略。

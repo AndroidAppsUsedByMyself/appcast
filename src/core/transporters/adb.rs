@@ -18,12 +18,15 @@
 //! Tuning params (via `--param` / profile `params`) — this backend owns both
 //! interpretation and defaults:
 //! - `adb_path`, `scrcpy_path`: custom binaries
-//! - `resolution`: `<WxH>` for the virtual display (default `1920x1080`,
-//!   an opinionated landscape canvas — omitting would mirror the phone's
-//!   portrait-shaped main display size)
+//! - `resolution`: `<WxH>` for the virtual display (unset → bare
+//!   `--new-display`, letting scrcpy choose the geometry)
 //! - `fps`: frame rate cap (unset → scrcpy default, i.e. uncapped)
 //! - `bit_rate`: video bit rate in Mbps (unset → scrcpy default, 8M today;
 //!   sent as `<n>M`)
+//!
+//! Guiding rule: nothing enters the fixed pipeline unless it is required
+//! by the feature itself or 100% certain for every user — preferences
+//! belong in profiles, not in hard-coded defaults.
 //!
 //! Everything else scrcpy offers goes through raw args after `--`, appended
 //! verbatim to the command line (e.g. `-- --no-vd-destroy-content
@@ -53,8 +56,6 @@ pub struct AdbScrcpyTransporter;
 const KNOWN_PARAMS: &[&str] = &["adb_path", "scrcpy_path", "resolution", "fps", "bit_rate"];
 
 /// Backend-owned defaults, applied whenever the matching param is absent.
-const DEFAULT_RESOLUTION: (u32, u32) = (1920, 1080);
-
 /// First scrcpy release shipping `--new-display` / `--start-app`.
 const VD_MIN_MAJOR: u32 = 3;
 
@@ -70,11 +71,14 @@ impl AdbScrcpyTransporter {
             .collect()
     }
 
-    /// Virtual display size: `resolution` param or the built-in default.
-    fn resolution(config: &ResolvedConfig) -> Result<(u32, u32), AppError> {
+    /// Virtual display size: `resolution` param, or `None` meaning "let
+    /// scrcpy decide" (a bare `--new-display` mirrors the main display
+    /// geometry). Deliberately no opinionated default — users pick once in
+    /// a profile instead of living inside a false comfort zone.
+    fn resolution(config: &ResolvedConfig) -> Result<Option<(u32, u32)>, AppError> {
         match config.param("resolution") {
-            None => Ok(DEFAULT_RESOLUTION),
-            Some(value) => parse_wxh(value),
+            None => Ok(None),
+            Some(value) => parse_wxh(value).map(Some),
         }
     }
 
@@ -213,14 +217,18 @@ impl AdbScrcpyTransporter {
         app: &str,
         config: &ResolvedConfig,
     ) -> Result<Vec<String>, AppError> {
-        let (width, height) = Self::resolution(config)?;
+        let resolution = Self::resolution(config)?;
         let fps = Self::fps(config)?;
         let bit_rate = Self::bit_rate(config)?;
 
         let mut args = vec![
             "-s".to_string(),
             target.to_string(),
-            format!("--new-display={width}x{height}"),
+            match resolution {
+                Some((width, height)) => format!("--new-display={width}x{height}"),
+                // value-less form: scrcpy picks the geometry itself
+                None => "--new-display".to_string(),
+            },
             format!("--start-app={app}"),
             // The IME must live on the casted display, not the phone's main
             // screen — otherwise device-side input methods (fcitx-android,
@@ -452,9 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn resolution_defaults_but_streaming_knobs_defer_to_scrcpy() {
+    fn all_streaming_knobs_defer_to_scrcpy_when_unset() {
         let cfg = config(&[], &[]);
-        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1920, 1080));
+        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), None);
         assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), None);
         assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), None);
     }
@@ -465,7 +473,7 @@ mod tests {
             &[],
             &[("resolution", "1280x960"), ("fps", "90"), ("bit_rate", "12")],
         );
-        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1280, 960));
+        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), Some((1280, 960)));
         assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), Some(90));
 
 
@@ -488,10 +496,10 @@ mod tests {
             &[],
         );
         let mut args = vec![
-            "-s",
-            "10.0.0.8:5555",
-            "--new-display=1920x1080",
-            "--start-app=com.termux",
+                "-s",
+                "10.0.0.8:5555",
+                "--new-display",
+                "--start-app=com.termux",
             "--display-ime-policy=local",
             // passthrough lands verbatim at the tail
             "--no-vd-destroy-content",
