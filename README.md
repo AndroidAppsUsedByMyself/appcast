@@ -92,6 +92,9 @@ appcast profile save qq adb-scrcpy SERIAL com.tencent.mobileqq \
     --param resolution=1280x960 -- --no-vd-destroy-content
 appcast profile edit qq
 appcast run --profile qq
+
+# Derive a variant from an existing profile (inherits everything)
+appcast profile save qq-lan --profile qq --target 192.168.1.20:5555
 ```
 
 Config merge priority (highest wins):

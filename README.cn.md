@@ -91,6 +91,9 @@ appcast profile save qq adb-scrcpy 序列号 com.tencent.mobileqq \
     --param resolution=1280x960 -- --no-vd-destroy-content
 appcast profile edit qq
 appcast run --profile qq
+
+# 从现有 Profile 派生变体（其余全部继承）
+appcast profile save qq-lan --profile qq --target 192.168.1.20:5555
 ```
 
 配置合并优先级（高者胜）：

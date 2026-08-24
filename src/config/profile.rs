@@ -11,6 +11,21 @@ use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::AppError;
+use crate::core::transporter::ResolvedConfig;
+
+/// A profile is a frozen [`ResolvedConfig`]: the merge output of `run`
+/// persisted verbatim, so saving and running share one data shape.
+impl From<ResolvedConfig> for Profile {
+    fn from(config: ResolvedConfig) -> Self {
+        Self {
+            transporter: config.transporter,
+            target: config.target,
+            app: config.app,
+            params: config.params,
+            raw_args: config.raw_args,
+        }
+    }
+}
 
 /// A saved parameter bundle. `transporter` is required; the addressing slots
 /// and everything else default, so hand-written YAML stays minimal.

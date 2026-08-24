@@ -212,19 +212,34 @@ pub enum ProfileAction {
     Save {
         /// Profile name
         name: String,
-        /// Connection protocol
+        /// Connection protocol (optional when deriving from --profile)
         #[arg(value_parser = TransporterValueParser)]
-        transporter: String,
+        transporter: Option<String>,
         /// Address slot (required by most transporters)
         target: Option<String>,
         /// Content slot (optional, per transporter)
         app: Option<String>,
+        /// Override transporter (--transporter wins over the positional)
+        #[arg(long = "transporter", value_name = "TYPE", value_parser = TransporterValueParser)]
+        transporter_flag: Option<String>,
+        /// Override address slot (--target wins over the positional)
+        #[arg(long = "target", value_name = "ADDR")]
+        target_flag: Option<String>,
+        /// Override content slot (--app wins over the positional)
+        #[arg(long = "app", value_name = "IDENTIFIER")]
+        app_flag: Option<String>,
         /// Backend param KEY=VALUE; repeatable
         #[arg(long = "param", value_name = "KEY=VALUE")]
         extra_params: Vec<String>,
         /// Raw args stored verbatim (`-- --no-audio -x`)
         #[arg(last = true, value_name = "RAW_ARGS")]
         raw_args: Vec<String>,
+        /// Ignore BASE's raw_args (CLI passthrough becomes the whole list)
+        #[arg(long)]
+        clear_raw: bool,
+        /// Derive from this existing profile before applying overrides
+        #[arg(long = "profile", value_name = "BASE")]
+        base_profile: Option<String>,
     },
     /// List saved profiles.
     List {
@@ -389,27 +404,44 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
             transporter,
             target,
             app,
+            transporter_flag,
+            target_flag,
+            app_flag,
             extra_params,
             raw_args,
+            clear_raw,
+            base_profile,
         } => {
-            // Guard against slot-shift typos: an unknown transporter means
-            // the positionals were probably misaligned (e.g. name omitted).
-            transporters::default_registry().get(&transporter).map(|_| ())?;
-
-            let mut params = HashMap::new();
-            for kv in &extra_params {
-                let (key, value) = kv
-                    .split_once('=')
-                    .ok_or_else(|| AppError::InvalidParamFormat(kv.clone()))?;
-                params.insert(key.to_string(), value.to_string());
-            }
-            let new_profile = Profile {
-                transporter: transporter.clone(),
-                target,
-                app,
-                params,
-                raw_args: raw_args.clone(),
+            // Load the derive base first (if any), then reuse run's merge
+            // machinery: a saved profile is just a frozen ResolvedConfig.
+            // Flags win over positionals so slot-shift typos stay impossible.
+            let transporter = transporter.or(transporter_flag);
+            let target = target.or(target_flag);
+            let app = app.or(app_flag);
+            let base = load_optional_profile(base_profile.as_deref())?;
+            let run_like = RunArgs {
+                positional_transporter: transporter,
+                positional_target: target,
+                positional_app: app,
+                extra_params,
+                raw_args,
+                clear_raw,
+                ..RunArgs::default()
             };
+            const USAGE: &str =
+                "appcast profile save <NAME> [TRANSPORTER] [TARGET] [APP] [--profile BASE]";
+            let resolved = merge_config(&run_like, base).map_err(|e| match e {
+                AppError::MissingTransporter => AppError::Usage(USAGE.into()),
+                other => other,
+            })?;
+
+            // Defense-in-depth: base profiles may carry a stale name that
+            // never passed the clap parser.
+            transporters::default_registry()
+                .get(&resolved.transporter)
+                .map(|_| ())?;
+
+            let new_profile = Profile::from(resolved);
             let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
             println!("{}", render_save_summary(&new_profile));
