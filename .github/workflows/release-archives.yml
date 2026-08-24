@@ -1,0 +1,284 @@
+name: release-archives
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/**'
+      - '.github/workflows/release-archives.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        type: boolean
+        required: false
+        default: false
+        description: 'Create a formal GitHub Release (tag v<version>)'
+      version:
+        type: string
+        required: false
+        default: ''
+        description: 'Version for the release (default: Cargo.toml version)'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >-
+            aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android,
+            aarch64-unknown-linux-gnu, armv7-unknown-linux-gnueabihf,
+            x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # dependency crates are cached per toolchain + Cargo.lock;
+          # target/ for cross targets is large, but shared across builds
+          cache-on-failure: true
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+
+      - name: Install Debian and Windows cross toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
+            gcc-mingw-w64-x86-64
+
+      - name: Cross-compile Termux binaries
+        env:
+          NDK_TOOLCHAIN: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64
+        run: |
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_TOOLCHAIN/bin/aarch64-linux-android24-clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$NDK_TOOLCHAIN/bin/armv7a-linux-androideabi24-clang"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_AR="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$NDK_TOOLCHAIN/bin/x86_64-linux-android24-clang"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_AR="$NDK_TOOLCHAIN/bin/llvm-ar"
+
+          export CC_aarch64_linux_android="$NDK_TOOLCHAIN/bin/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CC_armv7_linux_androideabi="$NDK_TOOLCHAIN/bin/armv7a-linux-androideabi24-clang"
+          export AR_armv7_linux_androideabi="$NDK_TOOLCHAIN/bin/llvm-ar"
+          export CC_x86_64_linux_android="$NDK_TOOLCHAIN/bin/x86_64-linux-android24-clang"
+          export AR_x86_64_linux_android="$NDK_TOOLCHAIN/bin/llvm-ar"
+
+          cargo build --target aarch64-linux-android --release --locked
+          cargo build --target armv7-linux-androideabi --release --locked
+          cargo build --target x86_64-linux-android --release --locked
+
+          mkdir -p target/termux/aarch64 target/termux/arm target/termux/x86_64
+          cp target/aarch64-linux-android/release/appcast target/termux/aarch64/appcast
+          cp target/armv7-linux-androideabi/release/appcast target/termux/arm/appcast
+          cp target/x86_64-linux-android/release/appcast target/termux/x86_64/appcast
+
+      - name: Build Debian binaries
+        run: |
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR=aarch64-linux-gnu-ar
+          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc
+          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_AR=arm-linux-gnueabihf-ar
+          export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+          export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+          export CC_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-gcc
+          export AR_armv7_unknown_linux_gnueabihf=arm-linux-gnueabihf-ar
+
+          cargo build --release --locked
+          cargo build --target aarch64-unknown-linux-gnu --release --locked
+          cargo build --target armv7-unknown-linux-gnueabihf --release --locked
+
+          mkdir -p target/debian/amd64 target/debian/arm64 target/debian/armhf
+          cp target/release/appcast target/debian/amd64/appcast
+          cp target/aarch64-unknown-linux-gnu/release/appcast target/debian/arm64/appcast
+          cp target/armv7-unknown-linux-gnueabihf/release/appcast target/debian/armhf/appcast
+
+      - name: Build Windows binary (mingw, static CRT)
+        run: |
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_AR=x86_64-w64-mingw32-ar
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C target-feature=+crt-static"
+          export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+          export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
+
+          cargo build --target x86_64-pc-windows-gnu --release --locked
+
+          mkdir -p target/windows/x86_64
+          cp target/x86_64-pc-windows-gnu/release/appcast.exe target/windows/x86_64/appcast.exe
+
+      - name: Package .deb files
+        run: |
+          chmod +x scripts/termux/mkdeb.sh
+          VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "appcast") | .version')"
+
+          mkdir -p pool/termux pool/debian
+          for arch in aarch64 arm x86_64; do
+            BIN="$(find "target/termux/$arch" -type f -name appcast | head -1)"
+            [ -n "$BIN" ] || { echo "no binary for $arch" >&2; exit 1; }
+            scripts/termux/mkdeb.sh "$BIN" "$VERSION" "$arch" "pool/termux/appcast_${VERSION}_${arch}.deb" termux
+          done
+
+          for arch in amd64 arm64 armhf; do
+            BIN="$(find "target/debian/$arch" -type f -name appcast | head -1)"
+            [ -n "$BIN" ] || { echo "no binary for $arch" >&2; exit 1; }
+            scripts/termux/mkdeb.sh "$BIN" "$VERSION" "$arch" "pool/debian/appcast_${VERSION}_${arch}.deb" debian
+          done
+
+      - name: Build Windows artifact
+        run: |
+          VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "appcast") | .version')"
+          cp target/windows/x86_64/appcast.exe "pool/appcast-${VERSION}-x86_64.exe"
+          sha256sum "pool/appcast-${VERSION}-x86_64.exe" | cut -d' ' -f1 \
+            > "pool/appcast-${VERSION}-x86_64.exe.sha256"
+          echo "== DLL imports (must be Windows system DLLs only) =="
+          objdump -p "pool/appcast-${VERSION}-x86_64.exe" | grep -E 'DLL Name|file format' || true
+
+      - name: Resolve version and tag
+        id: version
+        run: |
+          CARGO_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "appcast") | .version')"
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="$CARGO_VERSION"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "cargo_version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MAKE_RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          # clean, human-friendly asset names (use known arch lists, not
+          # filename parsing: x86_64 contains an underscore)
+          STAGE="${{ github.workspace }}/stage"
+          mkdir -p "$STAGE"
+          for arch in aarch64 arm x86_64; do
+            cp "pool/termux/appcast_${VERSION}_${arch}.deb" "$STAGE/termux-${arch}.deb"
+          done
+          for arch in amd64 arm64 armhf; do
+            cp "pool/debian/appcast_${VERSION}_${arch}.deb" "$STAGE/debian-${arch}.deb"
+          done
+          cp pool/*.exe "$STAGE/windows-x86_64.exe"
+
+          OWNER="${REPO%%/*}"
+          PROJECT="${REPO##*/}"
+          PAGES="https://${OWNER}.github.io/${PROJECT}"
+          NOTES="Built from \`${GITHUB_SHA::12}\`. adb and scrcpy are required at runtime (not bundled).
+          See the JSON indexes:
+          - ${PAGES}/manifest.json — manifest of the build just published
+          - ${PAGES}/latest.json — alias of manifest.json (latest build)
+          - ${PAGES}/unstable.json — alias of manifest.json (unstable build)
+          - ${PAGES}/releases.json — formal releases, newest first"
+
+          if [ "$MAKE_RELEASE" = "true" ]; then
+            TAG="v${VERSION}"
+            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              echo "::error::Release $TAG already exists; pick a different version"
+              exit 1
+            fi
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "kind=formal" >> "$GITHUB_OUTPUT"
+          else
+            TAG="unstable"
+            gh release delete unstable --repo "$REPO" --yes --cleanup-tag 2>/dev/null || true
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "kind=unstable" >> "$GITHUB_OUTPUT"
+          fi
+
+          # manifest is part of the release assets so release.package URLs resolve
+          python3 scripts/termux/mkrelease.py manifest \
+            --version "$VERSION" --tag "$TAG" --repo "$REPO" \
+            --stage "$STAGE" --out "$STAGE/manifest.json"
+
+          if [ "$MAKE_RELEASE" = "true" ]; then
+            gh release create "$TAG" "$STAGE"/* \
+              --repo "$REPO" --title "appcast ${VERSION}" \
+              --notes "$NOTES" --target "$GITHUB_SHA"
+          else
+            gh release create "$TAG" "$STAGE"/* \
+              --repo "$REPO" --title "appcast unstable (${VERSION})" \
+              --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+          fi
+          echo "stage=$STAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate JSON indexes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          STAGE: ${{ steps.release.outputs.stage }}
+        run: |
+          set -euo pipefail
+          mkdir -p pages
+          cp "$STAGE/manifest.json" pages/manifest.json
+          # latest/unstable always point at the build just produced
+          cp pages/manifest.json pages/latest.json
+          cp pages/manifest.json pages/unstable.json
+          gh api "repos/$REPO/releases?per_page=100" > pages/gh-releases.json
+          python3 scripts/termux/mkrelease.py index \
+            --repo "$REPO" --releases pages/gh-releases.json --out pages
+          rm -f pages/gh-releases.json
+
+      - name: Generate apt repository metadata
+        env:
+          GPG_KEY: ${{ secrets.REPO_GPG_KEY }}
+        run: |
+          mkdir -p pages/termux/pool/main pages/debian/pool/main
+          for f in pool/termux/*.deb; do cp "$f" "pages/termux/pool/main/$(basename "$f")"; done
+          for f in pool/debian/*.deb; do cp "$f" "pages/debian/pool/main/$(basename "$f")"; done
+
+          python3 scripts/termux/mkrepo.py pages/termux \
+            --label "appcast (Termux)" --origin "appcast-termux" \
+            --desc "appcast Termux repository"
+          python3 scripts/termux/mkrepo.py pages/debian \
+            --label "appcast (Debian)" --origin "appcast-debian" \
+            --desc "appcast Debian/Ubuntu repository"
+
+      - name: Generate Windows index page
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          OWNER="${REPO%%/*}"
+          PROJECT="${REPO##*/}"
+          PAGES="https://${OWNER}.github.io/${PROJECT}"
+          mkdir -p pages/windows
+          cp pool/*.exe* pages/windows/
+          python3 scripts/termux/mkindex.py "$VERSION" pages/windows "$PAGES/windows" > pages/windows/index.html
+
+      - name: Verify pages tree
+        run: |
+          touch pages/.nojekyll
+          find pages -type f | sort | head -60
+          echo "== total =="
+          du -sh pages
+
+      - name: Deploy to GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages
+
+      - name: Deploy Pages
+        uses: actions/deploy-pages@v5
