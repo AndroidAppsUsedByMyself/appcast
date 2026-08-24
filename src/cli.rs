@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 
-use clap::{Args, Parser, Subcommand};
+use clap::builder::TypedValueParser;
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use tracing::debug;
 
 use crate::config::profile::{self, Profile};
@@ -11,6 +12,85 @@ use crate::core::error::AppError;
 use crate::core::transporter::{AppEntry, ResolvedConfig};
 use crate::core::transporters;
 use crate::utils::logger;
+
+/// Validates transporter names against the live registry at *parse* time,
+/// so typos surface with clap-native diagnostics (possible values + a
+/// closest-match hint) instead of mid-run backend errors. The candidate
+/// list comes from the registry itself, so forked backends join the check
+/// (and shell completions) automatically.
+#[derive(Clone, Copy, Default)]
+struct TransporterValueParser;
+
+impl TypedValueParser for TransporterValueParser {
+    type Value = String;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::builder::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let value = value.to_string_lossy().into_owned();
+
+        let registry = transporters::default_registry();
+        let names = registry.names();
+        if names.iter().any(|name| *name == value) {
+            return Ok(value);
+        }
+
+        Err(unknown_transporter_error(cmd, arg, &value, &names))
+    }
+}
+
+/// Build a clap-native invalid-value error listing every registered
+/// transporter (plus a closest-match hint when one is close enough).
+fn unknown_transporter_error(
+    cmd: &clap::Command,
+    arg: Option<&clap::builder::Arg>,
+    value: &str,
+    names: &[&str],
+) -> clap::Error {
+    let target = arg.map(|a| a.to_string()).unwrap_or_else(|| "<TRANSPORTER>".into());
+    let mut message = format!("invalid value '{value}' for '{target}'");
+    message.push_str(&format!("\n  [possible values: {}]", names.join(", ")));
+    if let Some(best) = closest_name(value, names) {
+        message.push_str(&format!("\n\n  tip: a similar value exists: '{best}'"));
+    }
+    // Command::error takes &mut self, so work on an error-path-only clone.
+    cmd.clone()
+        .error(clap::error::ErrorKind::InvalidValue, message)
+}
+
+/// Closest registry name within a small edit distance or by prefix,
+/// for the "did you mean" hint.
+fn closest_name<'a>(input: &str, names: &[&'a str]) -> Option<&'a str> {
+    let mut best: Option<(usize, &str)> = None;
+    for name in names {
+        let distance = edit_distance(input, name);
+        let close = distance <= 2 || name.starts_with(input);
+        if close && best.is_none_or(|(best_distance, _)| distance < best_distance) {
+            best = Some((distance, name));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
+/// Classic two-row Levenshtein distance.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
 
 /// Top-level `appcast` command.
 #[derive(Debug, Parser)]
@@ -49,8 +129,8 @@ pub enum Command {
 #[derive(Debug, Default, Args)]
 pub struct RunArgs {
     // ---- positional trio (priority 1) ----
-    /// Connection protocol (adb | ssh-x11 | waypipe)
-    #[arg(value_name = "TRANSPORTER")]
+    /// Connection protocol (adb-scrcpy | ssh-x11 | waypipe)
+    #[arg(value_name = "TRANSPORTER", value_parser = TransporterValueParser)]
     pub positional_transporter: Option<String>,
     /// Target address (device serial / host)
     #[arg(value_name = "TARGET")]
@@ -61,7 +141,7 @@ pub struct RunArgs {
 
     // ---- dedicated trio options (priority 2) ----
     /// Override connection protocol
-    #[arg(long = "transporter", value_name = "TYPE")]
+    #[arg(long = "transporter", value_name = "TYPE", value_parser = TransporterValueParser)]
     pub transporter: Option<String>,
     /// Override target address
     #[arg(long = "target", value_name = "ADDR")]
@@ -96,13 +176,13 @@ pub struct RunArgs {
 #[derive(Debug, Args)]
 pub struct ListArgs {
     /// Transporter whose listing semantics to use (e.g. adb-scrcpy)
-    #[arg(value_name = "TRANSPORTER")]
+    #[arg(value_name = "TRANSPORTER", value_parser = TransporterValueParser)]
     pub positional_transporter: Option<String>,
     /// Address slot ("where"), same meaning as in `run`
     #[arg(value_name = "TARGET")]
     pub positional_target: Option<String>,
     /// Override transporter (--transporter wins over the positional)
-    #[arg(long = "transporter", value_name = "TYPE")]
+    #[arg(long = "transporter", value_name = "TYPE", value_parser = TransporterValueParser)]
     pub transporter: Option<String>,
     /// Override address slot (--target wins over the positional)
     #[arg(long = "target", value_name = "ADDR")]
@@ -130,6 +210,7 @@ pub enum ProfileAction {
         /// Profile name
         name: String,
         /// Connection protocol
+        #[arg(value_parser = TransporterValueParser)]
         transporter: String,
         /// Address slot (required by most transporters)
         target: Option<String>,
@@ -158,6 +239,33 @@ pub enum ProfileAction {
         /// Profile name
         name: String,
     },
+}
+
+/// Print `error: …` and, for syntax-signal errors (unknown transporter,
+/// missing addressing slots), follow with the full clap-derived help menu
+/// so users can self-correct without re-running with `--help`.
+///
+/// Help text is rendered by clap from the argument definitions — it can
+/// never drift from the real surface. Everything goes to stderr.
+pub fn report_error(err: &anyhow::Error) {
+    eprintln!("error: {err:#}");
+    if !syntax_error(err) {
+        return;
+    }
+    eprintln!();
+    let mut stderr = std::io::stderr();
+    let _ = Cli::command().write_long_help(&mut stderr);
+    eprintln!();
+}
+
+/// Does this error indicate a usage/syntax problem (as opposed to a
+/// runtime failure like an unreachable device)?
+fn syntax_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause.downcast_ref::<AppError>().is_some_and(|e| {
+            matches!(e, AppError::UnknownTransporter { .. } | AppError::Usage(_))
+        })
+    })
 }
 
 /// Parse argv, init logging, dispatch. The single entry point from `main`.
@@ -642,6 +750,21 @@ mod tests {
     }
 
     #[test]
+    fn syntax_errors_trigger_help_menu() {
+        let usage: anyhow::Error = AppError::Usage("run adb-scrcpy <t> <a>".into()).into();
+        let unknown: anyhow::Error = AppError::UnknownTransporter {
+            name: "adb".into(),
+            available: "adb-scrcpy".into(),
+        }
+        .into();
+        assert!(syntax_error(&usage));
+        assert!(syntax_error(&unknown));
+        // runtime failures must not dump the menu
+        let runtime: anyhow::Error = AppError::DeviceNotFound("dev".into()).into();
+        assert!(!syntax_error(&runtime));
+    }
+
+    #[test]
     fn save_summary_reflects_slots_and_extensions() {
         use crate::config::profile::Profile;
         let p = Profile {
@@ -665,6 +788,32 @@ mod tests {
             raw_args: vec![],
         };
         assert!(render_save_summary(&minimal).contains("app=-"));
+    }
+
+    #[test]
+    fn transporter_parser_rejects_unknown_and_suggests() {
+        use std::ffi::OsStr;
+        let cmd = Cli::command();
+
+        let ok = TransporterValueParser
+            .parse_ref(&cmd, None, OsStr::new("adb-scrcpy"))
+            .unwrap();
+        assert_eq!(ok, "adb-scrcpy");
+
+        // typo close to a real name -> suggestion attached
+        let err = TransporterValueParser
+            .parse_ref(&cmd, None, OsStr::new("adb-scrcp"))
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+        let rendered = err.render().to_string();
+        assert!(rendered.contains("adb-scrcpy"), "{rendered}");
+        assert!(rendered.contains("tip: a similar value exists"), "{rendered}");
+
+        // prefix relationships also count as close ('adb' -> 'adb-scrcpy')
+        let err = TransporterValueParser
+            .parse_ref(&cmd, None, OsStr::new("adb"))
+            .unwrap_err();
+        assert!(err.render().to_string().contains("tip: a similar value exists"));
     }
 
     #[test]

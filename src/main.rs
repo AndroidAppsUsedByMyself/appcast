@@ -23,7 +23,7 @@ fn main() -> std::process::ExitCode {
             Ok(rt) => match rt.block_on(cli::run_cli()) {
                 Ok(()) => std::process::ExitCode::SUCCESS,
                 Err(err) => {
-                    eprintln!("error: {err:#}");
+                    cli::report_error(&err);
                     std::process::ExitCode::FAILURE
                 }
             },

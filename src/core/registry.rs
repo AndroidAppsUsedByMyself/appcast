@@ -33,6 +33,13 @@ impl TransporterRegistry {
         self.factories.insert(name.to_string(), Box::new(factory));
     }
 
+    /// All registered protocol names, sorted.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.factories.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
+    }
+
     /// Instantiate the transporter registered under `name`.
     ///
     /// Unknown names carry the live registry contents in the error, so the
