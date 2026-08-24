@@ -118,8 +118,10 @@ positional trio > dedicated trio options (--transporter/--target/--app)
     > profile fields (transporter/target/app/params/raw_args)
 ```
 
-List-typed `raw_args` follows the same "explicit wins" rule as scalars:
-non-empty CLI passthrough replaces the profile value wholesale.
+List-typed `raw_args` uses append semantics: final list = profile args
+++ CLI args, in that order (scrcpy's last-wins parser makes tail overrides
+possible). `--clear-raw` discards the profile base for cases where the
+stored flags are unwanted.
 
 ### D6 · Stateless tolerance
 

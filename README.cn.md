@@ -99,7 +99,7 @@ appcast run --profile qq
 
 选项：`--profile`、`--transporter`、`--target`、`--app`、
 `--log-level`、`--param KEY=VALUE`（可重复）、
-`--` 透传（非空时覆盖 Profile 的 `raw_args`）。
+`--` 透传（追加到 Profile 的 `raw_args` 之后；`--clear-raw` 重置）。
 
 后端扩展参数（`--param`）：`resolution`、`fps`、`bit_rate`、`adb_path`、
 `scrcpy_path`。未识别的键会警告并忽略——它们是自定义 transporter 的扩展通道。

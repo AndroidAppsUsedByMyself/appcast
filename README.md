@@ -100,7 +100,7 @@ positional slots > dedicated slot options (`--transporter/--target/--app`)
 
 Options: `--profile`, `--transporter`, `--target`, `--app`,
 `--log-level`, `--param KEY=VALUE` (repeatable),
-`--` passthrough (overrides profile `raw_args` when non-empty).
+`--` passthrough (appended to profile `raw_args`; `--clear-raw` resets).
 
 Backend params (`--param`): `resolution`, `fps`, `bit_rate`, `adb_path`,
 `scrcpy_path`. Unknown keys are warned about and ignored — they are the

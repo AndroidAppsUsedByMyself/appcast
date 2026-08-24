@@ -164,10 +164,13 @@ pub struct RunArgs {
     #[arg(long, value_name = "NAME")]
     pub profile: Option<String>,
 
-    /// Raw args appended verbatim to the scrcpy command; overrides the
-    /// profile's `raw_args` when non-empty (`-- --video-codec=h265 -x`)
+    /// Raw args APPENDED to the profile's `raw_args`; use --clear-raw to
+    /// start from an empty list instead (`-- --video-codec=h265 -x`)
     #[arg(last = true, value_name = "RAW_ARGS")]
     pub raw_args: Vec<String>,
+    /// Ignore the profile's raw_args (CLI passthrough becomes the whole list)
+    #[arg(long)]
+    pub clear_raw: bool,
 }
 
 /// Arguments for `appcast list`.
@@ -527,13 +530,14 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
         params.insert(key.to_string(), value.to_string());
     }
 
-    // ---- raw passthrough: profile provides a base, but any CLI `--` args
-    //      replace it wholesale (same "explicit wins" rule as scalars) ----
-    let raw_args = if args.raw_args.is_empty() {
-        p_raw_args
-    } else {
-        args.raw_args.clone()
-    };
+    // ---- raw passthrough: profile args first, then CLI additions appended
+    //      in order (scrcpy-style last-wins makes tail overrides possible);
+    //      --clear-raw discards the profile base entirely ----
+    let mut raw_args = Vec::new();
+    if !args.clear_raw {
+        raw_args.extend(p_raw_args);
+    }
+    raw_args.extend(args.raw_args.iter().cloned());
 
     Ok(ResolvedConfig {
         transporter,
@@ -682,17 +686,30 @@ mod tests {
     }
 
     #[test]
-    fn raw_args_profile_fallback_and_cli_override() {
-        // No CLI passthrough → profile's raw_args flow through.
+    fn raw_args_append_and_clear_semantics() {
+        // Bare run → profile's raw_args flow through.
         let args = positional("adb", "d", "p");
         let config = merge_config(&args, Some(sample_profile())).unwrap();
         assert_eq!(config.raw_args, vec!["--keep-active"]);
 
-        // Non-empty CLI passthrough replaces the profile's wholesale.
-        let mut override_args = positional("adb", "d", "p");
-        override_args.raw_args = vec!["-x".into()];
-        let config = merge_config(&override_args, Some(sample_profile())).unwrap();
-        assert_eq!(config.raw_args, vec!["-x"]);
+        // CLI additions append AFTER the profile base (last-wins friendly).
+        let mut append_args = positional("adb", "d", "p");
+        append_args.raw_args = vec!["-x".into()];
+        let config = merge_config(&append_args, Some(sample_profile())).unwrap();
+        assert_eq!(config.raw_args, vec!["--keep-active", "-x"]);
+
+        // --clear-raw drops the profile base; additions may be empty.
+        let mut clear_args = positional("adb", "d", "p");
+        clear_args.clear_raw = true;
+        let config = merge_config(&clear_args, Some(sample_profile())).unwrap();
+        assert!(config.raw_args.is_empty());
+
+        // Clear + fresh content.
+        let mut rebuild_args = positional("adb", "d", "p");
+        rebuild_args.clear_raw = true;
+        rebuild_args.raw_args = vec!["--no-audio".into()];
+        let config = merge_config(&rebuild_args, Some(sample_profile())).unwrap();
+        assert_eq!(config.raw_args, vec!["--no-audio"]);
     }
 
     #[test]

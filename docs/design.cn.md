@@ -108,8 +108,9 @@ param 是语义化的（一个键可以映射为二进制路径、一个 flag、
     > Profile 字段（transporter/target/app/params/raw_args）
 ```
 
-列表类型的 `raw_args` 遵循与标量相同的"显式即胜"规则：CLI 非空透传整体替换
-Profile 值。
+列表类型的 `raw_args` 采用追加语义：最终列表 = Profile 参数 ++ CLI 参数
+（保持该顺序，scrcpy 的后值生效解析器使尾部覆盖成为可能）。`--clear-raw`
+可丢弃 Profile 底子，用于不想要已存 flag 的场景。
 
 ### D6 · 无状态容忍
 
