@@ -104,7 +104,18 @@ Options: `--profile`, `--transporter`, `--target`, `--app`,
 
 Backend params (`--param`): `resolution`, `fps`, `bit_rate`, `adb_path`,
 `scrcpy_path`. Unknown keys are warned about and ignored — they are the
-extension surface for custom transporters. The `adb-scrcpy` backend requires
+extension surface for custom transporters.
+
+The virtual display always uses `--display-ime-policy=local`, so device
+input methods appear inside the casted window. For typing CJK with your
+PC keyboard, switch scrcpy to HID keyboard mode:
+
+```bash
+appcast run adb-scrcpy SERIAL com.tencent.mobileqq -- --keyboard=uhid
+```
+
+(Plain key injection cannot inject CJK characters — you would see
+`Could not inject char` warnings.) The `adb-scrcpy` backend requires
 **scrcpy >= 3.0** (checked at startup, with an explicit error message).
 
 > `--activity` is intentionally unsupported: apps are started by scrcpy

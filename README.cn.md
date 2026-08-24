@@ -103,6 +103,15 @@ appcast run --profile qq
 
 后端扩展参数（`--param`）：`resolution`、`fps`、`bit_rate`、`adb_path`、
 `scrcpy_path`。未识别的键会警告并忽略——它们是自定义 transporter 的扩展通道。
+
+虚拟显示固定使用 `--display-ime-policy=local`，设备输入法的候选框会出现在
+投屏窗口内。用电脑键盘打中文请切换 scrcpy 到 HID 键盘模式：
+
+```bash
+appcast run adb-scrcpy 序列号 com.tencent.mobileqq -- --keyboard=uhid
+```
+
+（默认按键注入无法输入 CJK 字符，会出现 `Could not inject char` 警告。）
 `adb-scrcpy` 后端要求 **scrcpy >= 3.0**（启动时检查，报错信息明确）。
 
 > 不支持 `--activity`：应用由 scrcpy 自行启动（`--start-app` 以整包为单位）。

@@ -8,8 +8,12 @@
 //! Equivalent to:
 //! ```text
 //! scrcpy -s <target> --new-display=<WxH> --start-app=<package>
-//!        [--no-vd-destroy-content] --max-fps <fps> --video-bit-rate <n>M
+//!        --display-ime-policy=local --max-fps <fps> --video-bit-rate <n>M
 //! ```
+//!
+//! The IME policy keeps device-side input methods on the casted display.
+//! For CJK text via the PC keyboard add `-- --keyboard=uhid` so the device
+//! IME composes characters (plain key injection cannot produce CJK).
 //!
 //! Tuning params (via `--param` / profile `params`) — this backend owns both
 //! interpretation and defaults:
@@ -213,6 +217,10 @@ impl AdbScrcpyTransporter {
             target.to_string(),
             format!("--new-display={width}x{height}"),
             format!("--start-app={app}"),
+            // The IME must live on the casted display, not the phone's main
+            // screen — otherwise device-side input methods (fcitx-android,
+            // Gboard...) pop up where the user cannot see them.
+            "--display-ime-policy=local".to_string(),
         ];
         args.push("--max-fps".to_string());
         args.push(fps.to_string());
@@ -469,22 +477,27 @@ mod tests {
             &["--no-vd-destroy-content", "--video-codec=h265", "-x"],
             &[],
         );
+        let mut args = vec![
+            "-s",
+            "10.0.0.8:5555",
+            "--new-display=1920x1080",
+            "--start-app=com.termux",
+            "--display-ime-policy=local",
+            "--max-fps",
+            "60",
+            "--video-bit-rate",
+            "8M",
+            // passthrough lands verbatim at the tail
+            "--no-vd-destroy-content",
+            "--video-codec=h265",
+            "-x",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
         assert_eq!(
             AdbScrcpyTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap(),
-            vec![
-                "-s",
-                "10.0.0.8:5555",
-                "--new-display=1920x1080",
-                "--start-app=com.termux",
-                "--max-fps",
-                "60",
-                "--video-bit-rate",
-                "8M",
-                // passthrough lands verbatim at the tail
-                "--no-vd-destroy-content",
-                "--video-codec=h265",
-                "-x",
-            ]
+            args
         );
     }
 
