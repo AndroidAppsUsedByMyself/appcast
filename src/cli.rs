@@ -91,15 +91,20 @@ pub struct RunArgs {
 }
 
 /// Arguments for `appcast list`.
+///
+/// Mirrors `run`'s shape minus the content slot: `<TRANSPORTER> [<TARGET>]`.
 #[derive(Debug, Args)]
 pub struct ListArgs {
     /// Transporter whose listing semantics to use (e.g. adb-scrcpy)
     #[arg(value_name = "TRANSPORTER")]
     pub positional_transporter: Option<String>,
+    /// Address slot ("where"), same meaning as in `run`
+    #[arg(value_name = "TARGET")]
+    pub positional_target: Option<String>,
     /// Override transporter (--transporter wins over the positional)
     #[arg(long = "transporter", value_name = "TYPE")]
     pub transporter: Option<String>,
-    /// Target address (required unless present in --profile)
+    /// Override address slot (--target wins over the positional)
     #[arg(long = "target", value_name = "ADDR")]
     pub target: Option<String>,
     /// Source transporter/target/params from this profile
@@ -175,8 +180,9 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
     let profile = load_optional_profile(args.profile.as_deref())?;
 
     // Listing is backend-specific (pm list vs .desktop scan vs ...), so the
-    // transporter is required here too — same explicitness as `run`.
-    const USAGE: &str = "appcast list <TRANSPORTER> --target <ADDR>";
+    // transporter is required here too — same explicitness as `run`. Slot
+    // resolution mirrors run exactly: positional > flag > profile.
+    const USAGE: &str = "appcast list <TRANSPORTER> <TARGET>";
     let transporter_name = args
         .positional_transporter
         .clone()
@@ -184,7 +190,9 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
         .or_else(|| profile.as_ref().map(|p| p.transporter.clone()))
         .ok_or(AppError::Usage(USAGE.into()))?;
     let target = args
-        .target
+        .positional_target
+        .clone()
+        .or(args.target)
         .or_else(|| profile.as_ref().and_then(|p| p.target.clone()))
         .ok_or(AppError::Usage(USAGE.into()))?;
     let params = profile.map(|p| p.params).unwrap_or_default();
