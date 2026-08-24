@@ -365,15 +365,27 @@ fn parse_scrcpy_major(banner: &str) -> Option<u32> {
 
 /// Parse `scrcpy --list-apps` output into entries.
 ///
-/// Each entry line looks like ` * <display name> <package>`; the package
+/// Each entry line looks like ` * <display name> <package>` (launchable)
+/// or ` - <display name> <package>` (installed but without a launcher
+/// entry — still startable through scrcpy's own mechanism). The package
 /// name cannot contain whitespace, so the last token is the id and
 /// everything before it is the display name (which may contain spaces and
 /// CJK). Non-entry lines (banners, server logs) are ignored.
+///
+/// Launchability is preserved as `meta["launchable"] = "true"/"false"`.
 fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
     output
         .lines()
         .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("* ")?.trim();
+            let rest = line.trim_start();
+            let (launchable, rest) = if let Some(rest) = rest.strip_prefix("* ") {
+                (true, rest)
+            } else if let Some(rest) = rest.strip_prefix("- ") {
+                (false, rest)
+            } else {
+                return None;
+            };
+            let rest = rest.trim();
             let split_at = rest.rfind(char::is_whitespace)?;
             let name = rest[..split_at].trim();
             let id = rest[split_at..].trim();
@@ -383,7 +395,10 @@ fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
             Some(AppEntry {
                 id: id.to_string(),
                 name: Some(name.to_string()),
-                meta: HashMap::new(),
+                meta: HashMap::from([(
+                    "launchable".to_string(),
+                    if launchable { "true" } else { "false" }.to_string(),
+                )]),
             })
         })
         .collect()
@@ -509,12 +524,22 @@ mod tests {
         let out = "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n\
                    [server] INFO: List of apps:\n\
                     * Google Play 商店                 com.android.vending\n\
+                    - 58同城                           com.wuba\n\
                     * SIM 卡工具包                       com.android.stk\n";
         let entries = parse_scrcpy_app_list(out);
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].id, "com.android.vending");
         assert_eq!(entries[0].name.as_deref(), Some("Google Play 商店"));
-        assert_eq!(entries[1].id, "com.android.stk");
+        assert_eq!(
+            entries[0].meta.get("launchable").map(String::as_str),
+            Some("true")
+        );
+        // dash-marked lines are installed-but-not-launchable apps
+        assert_eq!(entries[1].id, "com.wuba");
+        assert_eq!(
+            entries[1].meta.get("launchable").map(String::as_str),
+            Some("false")
+        );
         // banner / server-log lines are ignored, not misparsed
         assert!(!entries.iter().any(|e| e.id.contains("scrcpy")));
     }
