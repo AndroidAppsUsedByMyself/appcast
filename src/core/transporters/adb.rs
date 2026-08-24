@@ -301,7 +301,7 @@ impl Transporter for AdbScrcpyTransporter {
             self.check_device(config, target).await?;
 
             let mut child = self.spawn_scrcpy(target, app, config).await?;
-            info!(target, app, "scrcpy virtual display started; press Ctrl+C to stop");
+            info!(target = %target, app = %app, "scrcpy virtual display started; press Ctrl+C to stop");
 
             let exit_reason = Self::wait_for_exit(&mut child).await;
             Self::reap_child(&mut child).await;

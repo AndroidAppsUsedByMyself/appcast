@@ -34,11 +34,18 @@ impl TransporterRegistry {
     }
 
     /// Instantiate the transporter registered under `name`.
+    ///
+    /// Unknown names carry the live registry contents in the error, so the
+    /// built-in list can never drift from reality.
     pub fn get(&self, name: &str) -> Result<Box<dyn Transporter>, AppError> {
-        self.factories
-            .get(name)
-            .map(|factory| factory())
-            .ok_or_else(|| AppError::UnknownTransporter(name.to_string()))
+        self.factories.get(name).map(|factory| factory()).ok_or_else(|| {
+            let mut available: Vec<&str> = self.factories.keys().map(String::as_str).collect();
+            available.sort_unstable();
+            AppError::UnknownTransporter {
+                name: name.to_string(),
+                available: available.join(", "),
+            }
+        })
     }
 }
 

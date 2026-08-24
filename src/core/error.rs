@@ -25,8 +25,11 @@ pub enum AppError {
     #[error("cannot determine scrcpy version: {0}")]
     ScrcpyVersionUnknown(String),
 
-    #[error("unknown transporter `{0}` (built-in: adb, ssh-x11, waypipe)")]
-    UnknownTransporter(String),
+    #[error("unknown transporter `{name}` (built-in: {available})")]
+    UnknownTransporter {
+        name: String,
+        available: String,
+    },
 
     #[error("device not found or unreachable: {0}")]
     DeviceNotFound(String),
