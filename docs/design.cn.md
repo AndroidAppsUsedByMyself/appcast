@@ -62,8 +62,10 @@ appcast run <TRANSPORTER> [<TARGET>] [<APP>]
 appcast run adb-scrcpy SERIAL com.app --param resolution=1280x960 --param fps=90
 ```
 
-adb/scrcpy 后端负责解释并在缺省时应用内置默认值（`1920x1080`、`60`、
-`8` Mbps）。**默认值住在语义所在的地方**。非法值会显式报错
+adb/scrcpy 后端负责解释：`resolution` 保留意见化默认值（`1920x1080` 横屏——
+缺省会镜像手机竖屏主屏尺寸），而 `fps`/`bit_rate` 未设置时直接沿用 scrcpy
+自身默认（不限帧率 / 8M）：强行 60fps 会悄悄降级高刷设备。**默认值住在语义
+所在的地方**。非法值会显式报错
 （`InvalidParamValue`），不再被静默转换。
 
 携带旧顶层键（`resolution:` 等）的 Profile 仍可加载，旧键被忽略。

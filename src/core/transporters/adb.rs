@@ -18,9 +18,12 @@
 //! Tuning params (via `--param` / profile `params`) — this backend owns both
 //! interpretation and defaults:
 //! - `adb_path`, `scrcpy_path`: custom binaries
-//! - `resolution`: `<W>x<H>` for the virtual display (default `1920x1080`)
-//! - `fps`: frame rate cap (default `60`)
-//! - `bit_rate`: video bit rate in Mbps (default `8`, sent as `<n>M`)
+//! - `resolution`: `<WxH>` for the virtual display (default `1920x1080`,
+//!   an opinionated landscape canvas — omitting would mirror the phone's
+//!   portrait-shaped main display size)
+//! - `fps`: frame rate cap (unset → scrcpy default, i.e. uncapped)
+//! - `bit_rate`: video bit rate in Mbps (unset → scrcpy default, 8M today;
+//!   sent as `<n>M`)
 //!
 //! Everything else scrcpy offers goes through raw args after `--`, appended
 //! verbatim to the command line (e.g. `-- --no-vd-destroy-content
@@ -51,8 +54,6 @@ const KNOWN_PARAMS: &[&str] = &["adb_path", "scrcpy_path", "resolution", "fps", 
 
 /// Backend-owned defaults, applied whenever the matching param is absent.
 const DEFAULT_RESOLUTION: (u32, u32) = (1920, 1080);
-const DEFAULT_FPS: u32 = 60;
-const DEFAULT_BIT_RATE_MBPS: u32 = 8;
 
 /// First scrcpy release shipping `--new-display` / `--start-app`.
 const VD_MIN_MAJOR: u32 = 3;
@@ -77,13 +78,15 @@ impl AdbScrcpyTransporter {
         }
     }
 
-    /// Frame rate: `fps` param or the built-in default.
-    fn fps(config: &ResolvedConfig) -> Result<u32, AppError> {
+    /// Optional frame rate: injected only when the `fps` param is set,
+    /// otherwise scrcpy's own default applies (uncapped).
+    fn fps(config: &ResolvedConfig) -> Result<Option<u32>, AppError> {
         match config.param("fps") {
-            None => Ok(DEFAULT_FPS),
+            None => Ok(None),
             Some(value) => value
                 .trim()
                 .parse()
+                .map(Some)
                 .map_err(|_| AppError::InvalidParamValue {
                     key: "fps".into(),
                     value: value.into(),
@@ -91,13 +94,15 @@ impl AdbScrcpyTransporter {
         }
     }
 
-    /// Bit rate in Mbps: `bit_rate` param or the built-in default.
-    fn bit_rate(config: &ResolvedConfig) -> Result<u32, AppError> {
+    /// Bit rate in Mbps (injected as `<n>M`), only when the `bit_rate`
+    /// param is set; otherwise scrcpy's own default applies (8M today).
+    fn bit_rate(config: &ResolvedConfig) -> Result<Option<u32>, AppError> {
         match config.param("bit_rate") {
-            None => Ok(DEFAULT_BIT_RATE_MBPS),
+            None => Ok(None),
             Some(value) => value
                 .trim()
                 .parse()
+                .map(Some)
                 .map_err(|_| AppError::InvalidParamValue {
                     key: "bit_rate".into(),
                     value: value.into(),
@@ -222,10 +227,15 @@ impl AdbScrcpyTransporter {
             // Gboard...) pop up where the user cannot see them.
             "--display-ime-policy=local".to_string(),
         ];
-        args.push("--max-fps".to_string());
-        args.push(fps.to_string());
-        args.push("--video-bit-rate".to_string());
-        args.push(format!("{bit_rate}M"));
+        if let Some(fps) = fps {
+            args.push("--max-fps".to_string());
+            args.push(fps.to_string());
+        }
+        if let Some(bit_rate) = bit_rate {
+            // scrcpy accepts unit-suffixed bit rates; params are in Mbps
+            args.push("--video-bit-rate".to_string());
+            args.push(format!("{bit_rate}M"));
+        }
         // Passthrough: every remaining scrcpy option, appended verbatim.
         args.extend(config.raw_args.iter().cloned());
         Ok(args)
@@ -442,11 +452,11 @@ mod tests {
     }
 
     #[test]
-    fn defaults_apply_when_params_absent() {
+    fn resolution_defaults_but_streaming_knobs_defer_to_scrcpy() {
         let cfg = config(&[], &[]);
         assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1920, 1080));
-        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), 60);
-        assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), 8);
+        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), None);
+        assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), None);
     }
 
     #[test]
@@ -456,8 +466,8 @@ mod tests {
             &[("resolution", "1280x960"), ("fps", "90"), ("bit_rate", "12")],
         );
         assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1280, 960));
-        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), 90);
-        assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), 12);
+        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), Some(90));
+
 
         let bad = config(&[], &[("resolution", "big")]);
         assert!(matches!(
@@ -483,10 +493,6 @@ mod tests {
             "--new-display=1920x1080",
             "--start-app=com.termux",
             "--display-ime-policy=local",
-            "--max-fps",
-            "60",
-            "--video-bit-rate",
-            "8M",
             // passthrough lands verbatim at the tail
             "--no-vd-destroy-content",
             "--video-codec=h265",
@@ -505,8 +511,10 @@ mod tests {
     fn minimal_config_has_no_extra_flags() {
         let cfg = config(&[], &[]);
         let args = AdbScrcpyTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap();
-        assert_eq!(args.last().map(String::as_str), Some("8M"));
-        assert!(!args.contains(&"--no-vd-destroy-content".to_string()));
+        // streaming knobs appear only when their params are set
+        assert!(!args.contains(&"--max-fps".to_string()));
+        assert!(!args.contains(&"--video-bit-rate".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("--display-ime-policy=local"));
     }
 
     #[test]
