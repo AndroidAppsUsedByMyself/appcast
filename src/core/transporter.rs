@@ -46,6 +46,37 @@ impl ResolvedConfig {
     }
 }
 
+/// One enumerable item on a target — the typed result of `list`.
+///
+/// This is a core-level data API, not a printing helper: every frontend
+/// (CLI today, TUI/WebUI later) consumes these values and renders them its
+/// own way. `Serialize` lets the CLI expose `--json` today and lets a WebUI
+/// return them as JSON verbatim tomorrow.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppEntry {
+    /// Canonical identifier to feed back into the `app` slot of `run`
+    /// (Android package name, executable path, ...).
+    pub id: String,
+    /// Human-readable display name, when the backend can obtain one
+    /// (`None` keeps script-friendly bare-id listings honest).
+    pub name: Option<String>,
+    /// Reserved for backend-specific extras (e.g. an icon reference,
+    /// categories, version). Keys are backend-defined; consumers must
+    /// treat unknown keys as opaque.
+    pub meta: HashMap<String, String>,
+}
+
+impl AppEntry {
+    /// Bare-bones entry with no display name and no extras.
+    pub fn id_only(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: None,
+            meta: HashMap::new(),
+        }
+    }
+}
+
 /// A "cast one app to this desktop" backend (adb+scrcpy, ssh-x11, waypipe...).
 ///
 /// Async methods return manually boxed futures so the trait stays usable as
@@ -58,11 +89,13 @@ pub trait Transporter: Send + Sync {
     /// virtual display, mirror it, and clean up on any exit path.
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>>;
 
-    /// List application identifiers available on `target`
-    /// (`pm list packages` for adb, `.desktop` scan later).
+    /// List application entries available on `target`
+    /// (`pm list packages` / scrcpy app listing for adb, `.desktop` scan
+    /// later). Rich fields are best-effort: backends may return
+    /// id-only entries when a platform cannot provide more.
     fn list_apps<'a>(
         &'a self,
         target: &'a str,
         params: &'a HashMap<String, String>,
-    ) -> BoxFut<'a, Result<Vec<String>, AppError>>;
+    ) -> BoxFut<'a, Result<Vec<AppEntry>, AppError>>;
 }

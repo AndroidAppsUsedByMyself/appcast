@@ -36,7 +36,7 @@ use tokio::process::{Child, Command};
 use tracing::{debug, info, warn};
 
 use crate::core::error::AppError;
-use crate::core::transporter::{BoxFut, ResolvedConfig, Transporter};
+use crate::core::transporter::{AppEntry, BoxFut, ResolvedConfig, Transporter};
 
 /// The adb + scrcpy virtual-display backend (the only implemented backend).
 pub struct AdbScrcpyTransporter;
@@ -315,8 +315,24 @@ impl Transporter for AdbScrcpyTransporter {
         &'a self,
         target: &'a str,
         params: &'a HashMap<String, String>,
-    ) -> BoxFut<'a, Result<Vec<String>, AppError>> {
+    ) -> BoxFut<'a, Result<Vec<AppEntry>, AppError>> {
         Box::pin(async move {
+            // Rich path first: scrcpy's own listing carries display names.
+            let scrcpy_path = params
+                .get("scrcpy_path")
+                .cloned()
+                .unwrap_or_else(|| format!("scrcpy{EXE_SUFFIX}"));
+            let mut cmd = Command::new(&scrcpy_path);
+            cmd.arg("--list-apps").arg("-s").arg(target);
+            if let Ok(stdout) = Self::capture(cmd, "scrcpy --list-apps").await {
+                let entries = parse_scrcpy_app_list(&stdout);
+                if !entries.is_empty() {
+                    return Ok(entries);
+                }
+            }
+
+            // Fallback: plain package ids, no display names.
+            debug!("falling back to `pm list packages` (ids only)");
             let adb_path = params
                 .get("adb_path")
                 .cloned()
@@ -325,12 +341,12 @@ impl Transporter for AdbScrcpyTransporter {
             cmd.args(["shell", "pm", "list", "packages"]);
             let stdout = Self::capture(cmd, "pm list packages").await?;
 
-            let mut apps: Vec<String> = stdout
+            let mut apps: Vec<AppEntry> = stdout
                 .lines()
                 .filter_map(|line| line.strip_prefix("package:"))
-                .map(str::to_owned)
+                .map(AppEntry::id_only)
                 .collect();
-            apps.sort();
+            apps.sort_by(|a, b| a.id.cmp(&b.id));
             Ok(apps)
         })
     }
@@ -345,6 +361,32 @@ fn parse_scrcpy_major(banner: &str) -> Option<u32> {
         .as_str()
         .parse()
         .ok()
+}
+
+/// Parse `scrcpy --list-apps` output into entries.
+///
+/// Each entry line looks like ` * <display name> <package>`; the package
+/// name cannot contain whitespace, so the last token is the id and
+/// everything before it is the display name (which may contain spaces and
+/// CJK). Non-entry lines (banners, server logs) are ignored.
+fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("* ")?.trim();
+            let split_at = rest.rfind(char::is_whitespace)?;
+            let name = rest[..split_at].trim();
+            let id = rest[split_at..].trim();
+            if name.is_empty() || id.is_empty() {
+                return None;
+            }
+            Some(AppEntry {
+                id: id.to_string(),
+                name: Some(name.to_string()),
+                meta: HashMap::new(),
+            })
+        })
+        .collect()
 }
 
 /// Parse a `"WxH"` string into its `(width, height)` components.
@@ -460,6 +502,21 @@ mod tests {
             .params
         )
         .is_empty());
+    }
+
+    #[test]
+    fn parses_scrcpy_app_listing() {
+        let out = "scrcpy 4.0 <https://github.com/Genymobile/scrcpy>\n\
+                   [server] INFO: List of apps:\n\
+                    * Google Play 商店                 com.android.vending\n\
+                    * SIM 卡工具包                       com.android.stk\n";
+        let entries = parse_scrcpy_app_list(out);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, "com.android.vending");
+        assert_eq!(entries[0].name.as_deref(), Some("Google Play 商店"));
+        assert_eq!(entries[1].id, "com.android.stk");
+        // banner / server-log lines are ignored, not misparsed
+        assert!(!entries.iter().any(|e| e.id.contains("scrcpy")));
     }
 
     #[test]

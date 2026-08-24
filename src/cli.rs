@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::config::profile::{self, Profile};
 use crate::core::error::AppError;
-use crate::core::transporter::ResolvedConfig;
+use crate::core::transporter::{AppEntry, ResolvedConfig};
 use crate::core::transporters;
 use crate::utils::logger;
 
@@ -110,6 +110,12 @@ pub struct ListArgs {
     /// Source transporter/target/params from this profile
     #[arg(long, value_name = "NAME")]
     pub profile: Option<String>,
+    /// Show display names alongside ids when the backend provides them
+    #[arg(short = 'l', long)]
+    pub long: bool,
+    /// Emit entries as pretty JSON (stable shape for scripts and UIs)
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Subcommands of `appcast profile`.
@@ -172,7 +178,7 @@ async fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
 async fn cmd_snapshot(args: RunArgs) -> anyhow::Result<()> {
     let profile = load_optional_profile(args.profile.as_deref())?;
     let config = merge_config(&args, profile)?;
-    println!("{}", render_snapshot(&config));
+    emit(&render_snapshot(&config))?;
     Ok(())
 }
 
@@ -198,10 +204,57 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
     let params = profile.map(|p| p.params).unwrap_or_default();
 
     let transporter = transporters::default_registry().get(&transporter_name)?;
-    for app in transporter.list_apps(&target, &params).await? {
-        println!("{app}");
-    }
+    let entries = transporter.list_apps(&target, &params).await?;
+
+    // Rendering is CLI-local; the data itself is the reusable core API
+    // (Serialize on AppEntry lets a future WebUI return it verbatim).
+    let rendered = if args.json {
+        serde_json::to_string_pretty(&entries)
+            .map_err(|e| AppError::BackendError(format!("serialize entries: {e}")))?
+    } else if args.long {
+        render_long(&entries)
+    } else {
+        render_ids(&entries)
+    };
+    emit(&rendered)?;
     Ok(())
+}
+
+/// Write to stdout, treating a closed downstream (`appcast list … | head`)
+/// as a clean exit instead of panicking on SIGPIPE-induced write errors.
+fn emit(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    match out.write_all(text.as_bytes()).and_then(|_| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Default rendering: one bare id per line (script-friendly).
+fn render_ids(entries: &[AppEntry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        out.push_str(&entry.id);
+        out.push('\n');
+    }
+    out
+}
+
+/// Long rendering: display name + id, tab-separated (name may be absent).
+fn render_long(entries: &[AppEntry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        match &entry.name {
+            Some(name) => out.push_str(name),
+            None => out.push('-'),
+        }
+        out.push('\t');
+        out.push_str(&entry.id);
+        out.push('\n');
+    }
+    out
 }
 
 async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
@@ -471,6 +524,26 @@ mod tests {
             "appcast run adb emulator-5554 com.tencent.mm \
              --param a=1 --param b=2 --param fps=90 -- -W"
         );
+    }
+
+    #[test]
+    fn list_renderers_cover_all_shapes() {
+        use crate::core::transporter::AppEntry;
+        let entries = vec![
+            AppEntry {
+                id: "com.a.b".into(),
+                name: Some("名字 B".into()),
+                meta: Default::default(),
+            },
+            AppEntry::id_only("bare.id"),
+        ];
+
+        assert_eq!(render_ids(&entries), "com.a.b\nbare.id\n");
+        assert_eq!(render_long(&entries), "名字 B\tcom.a.b\n-\tbare.id\n");
+
+        let json = serde_json::to_string(&entries).unwrap();
+        assert!(json.contains(r#""name":"名字 B""#));
+        assert!(json.contains(r#""id":"bare.id""#));
     }
 
     #[test]

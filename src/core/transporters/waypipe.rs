@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::core::error::AppError;
-use crate::core::transporter::{BoxFut, ResolvedConfig, Transporter};
+use crate::core::transporter::{AppEntry, BoxFut, ResolvedConfig, Transporter};
 
 /// Wayland / waypipe backend (not implemented yet).
 pub struct WaylandTransporter;
@@ -21,7 +21,7 @@ impl Transporter for WaylandTransporter {
         &'a self,
         _target: &'a str,
         _params: &'a HashMap<String, String>,
-    ) -> BoxFut<'a, Result<Vec<String>, AppError>> {
+    ) -> BoxFut<'a, Result<Vec<AppEntry>, AppError>> {
         Box::pin(async { Err(AppError::NotImplemented("waypipe backend".into())) })
     }
 }

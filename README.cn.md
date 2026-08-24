@@ -81,8 +81,10 @@ appcast run adb-scrcpy DUMMY com.termux --param resolution=1280x960 \
 # 只输出合并后的完整命令行，不执行
 appcast snapshot --profile qq
 
-# 列出设备上的包
-appcast list adb-scrcpy 10.0.0.8:5555
+# 列出设备上的应用
+appcast list adb-scrcpy 10.0.0.8:5555          # 仅包名
+appcast list adb-scrcpy 10.0.0.8:5555 -l       # 应用名 <TAB> 包名
+appcast list adb-scrcpy 10.0.0.8:5555 --json   # 完整结构化条目
 
 # Profile：保存 / 列出 / 编辑（$EDITOR）/ 删除
 appcast profile save qq adb-scrcpy 序列号 com.tencent.mobileqq
