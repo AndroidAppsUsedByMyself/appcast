@@ -146,8 +146,35 @@ pub fn list_profiles() -> Result<Vec<String>, AppError> {
     list_profiles_in(&profiles_dir()?)
 }
 
+/// Editor launch candidates, highest priority first.
+///
+/// `$VISUAL`/`$EDITOR` win (whitespace-split so values like `code -w`
+/// work), followed by a per-platform guaranteed-ish default: `notepad` on
+/// Windows, `nano`/`vi` on Unix.
+fn editor_candidates() -> Vec<Vec<String>> {
+    let mut candidates = Vec::new();
+    for key in ["VISUAL", "EDITOR"] {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            let mut parts = value.split_whitespace().map(str::to_owned);
+            let program = parts.next().expect("non-empty value has a first token");
+            candidates.push(std::iter::once(program).chain(parts).collect::<Vec<_>>());
+        }
+    }
+    if cfg!(windows) {
+        candidates.push(vec!["notepad".to_string()]);
+    } else {
+        candidates.push(vec!["nano".to_string()]);
+        candidates.push(vec!["vi".to_string()]);
+    }
+    candidates
+}
+
 /// Ensure the profile exists (write the template if missing), then open it
-/// in `$EDITOR` (fallback: `vi`). Blocks until the editor exits.
+/// in the user's editor. Blocks until the editor exits.
 pub async fn edit_profile(name: &str) -> Result<(), AppError> {
     let dir = profiles_dir()?;
     let path = profile_path(&dir, name);
@@ -156,18 +183,34 @@ pub async fn edit_profile(name: &str) -> Result<(), AppError> {
         save_profile_in(&dir, name, &template)?;
     }
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    let status = tokio::process::Command::new(&editor)
-        .arg(&path)
-        .status()
-        .await
-        .map_err(|e| AppError::BackendError(format!("cannot launch editor `{editor}`: {e}")))?;
-    if !status.success() {
-        return Err(AppError::BackendError(format!(
-            "editor exited with {status}"
-        )));
+    // Try every candidate; "program not found" moves down the chain, while
+    // a launched-but-failing editor surfaces its own status.
+    let candidates = editor_candidates();
+    let mut not_found = Vec::new();
+    for candidate in &candidates {
+        let (program, args) = candidate.split_first().expect("candidate has a program");
+        match tokio::process::Command::new(program)
+            .args(args)
+            .arg(&path)
+            .status()
+            .await
+        {
+            Ok(status) => {
+                if !status.success() {
+                    return Err(AppError::BackendError(format!(
+                        "editor `{program}` exited with {status}"
+                    )));
+                }
+                return Ok(());
+            }
+            Err(e) => not_found.push(format!("{program}: {e}")),
+        }
     }
-    Ok(())
+
+    Err(AppError::BackendError(format!(
+        "no usable editor found (tried: {}); set $VISUAL or $EDITOR",
+        not_found.join("; ")
+    )))
 }
 
 #[cfg(test)]
@@ -229,6 +272,18 @@ mod tests {
         assert_eq!(parsed.transporter, "adb-scrcpy");
         assert!(parsed.params.is_empty());
         assert!(parsed.raw_args.is_empty());
+    }
+
+    #[test]
+    fn editor_chain_always_has_a_platform_fallback() {
+        let candidates = editor_candidates();
+        assert!(!candidates.is_empty());
+        let last = candidates.last().unwrap().join(" ");
+        if cfg!(windows) {
+            assert_eq!(last, "notepad");
+        } else {
+            assert!(last == "vi" || last == "nano");
+        }
     }
 
     #[test]

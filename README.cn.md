@@ -86,7 +86,7 @@ appcast list adb-scrcpy 10.0.0.8:5555          # 仅包名
 appcast list adb-scrcpy 10.0.0.8:5555 -l       # 应用名 <TAB> 包名
 appcast list adb-scrcpy 10.0.0.8:5555 --json   # 完整结构化条目
 
-# Profile：保存 / 列出 / 编辑（$EDITOR）/ 删除
+# Profile：保存 / 列出 / 编辑（$VISUAL/$EDITOR，回退 notepad/vi）/ 删除
 appcast profile save qq adb-scrcpy 序列号 com.tencent.mobileqq \
     --param resolution=1280x960 -- --no-vd-destroy-content
 appcast profile edit qq
