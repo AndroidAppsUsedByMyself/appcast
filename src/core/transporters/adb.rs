@@ -365,20 +365,20 @@ fn parse_scrcpy_major(banner: &str) -> Option<u32> {
 
 /// Parse `scrcpy --list-apps` output into entries.
 ///
-/// Each entry line looks like ` * <display name> <package>` (launchable)
-/// or ` - <display name> <package>` (installed but without a launcher
-/// entry — still startable through scrcpy's own mechanism). The package
-/// name cannot contain whitespace, so the last token is the id and
-/// everything before it is the display name (which may contain spaces and
-/// CJK). Non-entry lines (banners, server logs) are ignored.
+/// Each entry line looks like ` * <display name> <package>` (system app,
+/// `FLAG_SYSTEM`) or ` - <display name> <package>` (user-installed app).
+/// All listed apps are launchable; the marker only distinguishes origin.
+/// The package name cannot contain whitespace, so the last token is the id
+/// and everything before it is the display name (which may contain spaces
+/// and CJK). Non-entry lines (banners, server logs) are ignored.
 ///
-/// Launchability is preserved as `meta["launchable"] = "true"/"false"`.
+/// The system flag is preserved as `meta["system"] = "true"/"false"`.
 fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
     output
         .lines()
         .filter_map(|line| {
             let rest = line.trim_start();
-            let (launchable, rest) = if let Some(rest) = rest.strip_prefix("* ") {
+            let (system, rest) = if let Some(rest) = rest.strip_prefix("* ") {
                 (true, rest)
             } else if let Some(rest) = rest.strip_prefix("- ") {
                 (false, rest)
@@ -396,8 +396,8 @@ fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
                 id: id.to_string(),
                 name: Some(name.to_string()),
                 meta: HashMap::from([(
-                    "launchable".to_string(),
-                    if launchable { "true" } else { "false" }.to_string(),
+                    "system".to_string(),
+                    if system { "true" } else { "false" }.to_string(),
                 )]),
             })
         })
@@ -530,14 +530,14 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].id, "com.android.vending");
         assert_eq!(entries[0].name.as_deref(), Some("Google Play 商店"));
+        // '*' marks system apps (FLAG_SYSTEM), '-' marks user-installed ones
         assert_eq!(
-            entries[0].meta.get("launchable").map(String::as_str),
+            entries[0].meta.get("system").map(String::as_str),
             Some("true")
         );
-        // dash-marked lines are installed-but-not-launchable apps
         assert_eq!(entries[1].id, "com.wuba");
         assert_eq!(
-            entries[1].meta.get("launchable").map(String::as_str),
+            entries[1].meta.get("system").map(String::as_str),
             Some("false")
         );
         // banner / server-log lines are ignored, not misparsed
