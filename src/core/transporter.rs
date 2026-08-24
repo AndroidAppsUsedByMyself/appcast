@@ -16,18 +16,22 @@ pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// layer accepts. Frontends (CLI today, TUI/Web later) are responsible for
 /// producing it via the priority stack.
 ///
-/// Deliberately thin: only the universal addressing trio plus two opaque
-/// extension channels. Everything backend-specific (resolution, fps,
-/// bit rate, paths, ...) travels inside `params` and is interpreted by the
-/// selected backend, which also owns the defaults.
+/// Deliberately thin. The addressing slots are *optional* here because their
+/// arity is backend-defined: adb needs `<TARGET> <APP>`, a future web
+/// transporter needs only a URL, a local-window capturer has no target at
+/// all. Each backend validates the slots it requires and owns its usage
+/// message; everything backend-specific beyond the slots travels inside
+/// `params` (with backend-owned defaults).
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     /// Protocol name, e.g. `"adb"`.
     pub transporter: String,
-    /// Device serial / host address.
-    pub target: String,
-    /// Backend-specific app identifier (Android package name, executable path...).
-    pub app: String,
+    /// Address slot ("where"): device serial, host, URL, ... as defined by
+    /// the backend.
+    pub target: Option<String>,
+    /// Content slot ("what to open there"): package name, executable path,
+    /// ... as defined by the backend.
+    pub app: Option<String>,
     /// Free-form extension params; keys are backend-defined
     /// (`adb_path`, `resolution`, `fps`, ...).
     pub params: HashMap<String, String>,

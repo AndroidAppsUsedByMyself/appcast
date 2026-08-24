@@ -24,18 +24,33 @@ Transporter trait（dyn）     ── name / run / list_apps
 
 ## 决策记录
 
-### D1 · `app` 槽位保留在位置参数
+### D1 · 寻址槽位由后端定义 schema，核心仅不透明承载
 
-`(协议, 目标, 应用)` 是本工具的领域模型：哪个协议、哪台机器、哪个应用。
-任何可以想象的后端都需要这三者，所以它们是核心的职责。职责切分为：
+本工具的寻址模型是"一个协议 + 两个可选槽位"：
 
-- **槽位**是通用的，由核心承载；
-- **含义**由后端定义（adb → 包名，ssh-x11 → 可执行路径，
-  waypipe → .desktop 条目）。
+```text
+appcast run <TRANSPORTER> [<TARGET>] [<APP>]
+#                        └─ "哪里"     └─ "在那里打开什么"
+```
 
-把 `app` 挪进 `--param` 会摧毁无状态一行命令的承诺
-（`appcast run adb <序列号> <包名>`），并把领域模型降格为字符串配置。
-已否决。
+不同 transporter 需要的元数不同：
+
+| transporter | 需要的槽位 | 映射 |
+|---|---|---|
+| adb/scrcpy | target + app | 设备序列号 → 包名 |
+| ssh-x11 / waypipe | target + app | host → 可执行路径 |
+| web/webview（未来） | 仅 target | URL |
+| vnc（未来） | 仅 target | `host:display` |
+| 本地窗口捕获（未来） | 仅 app | 窗口标题/id |
+
+因此**核心绝不校验元数**：`target`/`app` 端到端都是 `Option<String>`，
+每个后端自行拒绝无法处理的输入，并使用自己的 usage 文案
+（[`AppError::Usage`]）。核心层唯一的寻址错误是
+`MissingTransporter`（registry 查找需要它）。
+
+核心保证的是：槽位位置稳定、以固定优先级合并（D5），肌肉记忆可跨后端迁移。
+曾考虑并否决的两个方向：把 `app` 挪进 `--param`（把寻址降格为字符串配置）、
+在 CLI 层强制三元组齐全（虚构了并不存在的"普适真理"）。
 
 ### D2 · 强类型显示旋钮降级为 params
 

@@ -139,9 +139,9 @@ impl AndroidAdbTransporter {
     }
 
     /// Device reachability probe: `adb -s <t> shell echo ok` must echo `ok`.
-    async fn check_device(&self, config: &ResolvedConfig) -> Result<(), AppError> {
+    async fn check_device(&self, config: &ResolvedConfig, target: &str) -> Result<(), AppError> {
         let bin = Self::adb_bin(config);
-        let mut cmd = Self::adb_cmd(&bin, &config.target);
+        let mut cmd = Self::adb_cmd(&bin, target);
         cmd.args(["shell", "echo", "ok"]);
         let out = cmd
             .output()
@@ -150,7 +150,7 @@ impl AndroidAdbTransporter {
         if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok" {
             Ok(())
         } else {
-            Err(AppError::DeviceNotFound(config.target.clone()))
+            Err(AppError::DeviceNotFound(target.to_string()))
         }
     }
 
@@ -167,16 +167,20 @@ impl AndroidAdbTransporter {
 
     /// Build the scrcpy argument list (pure, unit-testable): fixed pipeline
     /// first, then the user's raw passthrough args verbatim at the tail.
-    fn scrcpy_args(config: &ResolvedConfig) -> Result<Vec<String>, AppError> {
+    fn scrcpy_args(
+        target: &str,
+        app: &str,
+        config: &ResolvedConfig,
+    ) -> Result<Vec<String>, AppError> {
         let (width, height) = Self::resolution(config)?;
         let fps = Self::fps(config)?;
         let bit_rate = Self::bit_rate(config)?;
 
         let mut args = vec![
             "-s".to_string(),
-            config.target.clone(),
+            target.to_string(),
             format!("--new-display={width}x{height}"),
-            format!("--start-app={}", config.app),
+            format!("--start-app={app}"),
         ];
         args.push("--max-fps".to_string());
         args.push(fps.to_string());
@@ -188,11 +192,16 @@ impl AndroidAdbTransporter {
     }
 
     /// Spawn scrcpy with the full virtual-display pipeline.
-    async fn spawn_scrcpy(&self, config: &ResolvedConfig) -> Result<Child, AppError> {
+    async fn spawn_scrcpy(
+        &self,
+        target: &str,
+        app: &str,
+        config: &ResolvedConfig,
+    ) -> Result<Child, AppError> {
         let bin = Self::scrcpy_bin(config);
 
         let mut cmd = Command::new(&bin);
-        cmd.args(Self::scrcpy_args(config)?);
+        cmd.args(Self::scrcpy_args(target, app, config)?);
         // Silence scrcpy's chatty stdout; stderr stays inherited so real
         // errors remain visible.
         cmd.stdout(Stdio::null());
@@ -232,22 +241,30 @@ impl Transporter for AndroidAdbTransporter {
 
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {
         Box::pin(async move {
+            // This backend's addressing schema: both slots are required.
+            // (Other transporters — e.g. a future web one — may need fewer.)
+            const USAGE: &str = "appcast run adb <serial|ip:port> <package>";
+            let target = config
+                .target
+                .as_deref()
+                .ok_or_else(|| AppError::Usage(USAGE.into()))?;
+            let app = config
+                .app
+                .as_deref()
+                .ok_or_else(|| AppError::Usage(USAGE.into()))?;
+
             // Fail fast on obviously-wrong identifiers before any subprocess.
-            Self::validate_package_name(&config.app)?;
+            Self::validate_package_name(app)?;
 
             // Surface likely typos in --param keys (they would be inert).
             for key in Self::unknown_param_keys(&config.params) {
                 warn!(key, "unknown param for adb backend (known: adb_path, scrcpy_path, resolution, fps, bit_rate); ignoring");
             }
 
-            self.check_device(config).await?;
+            self.check_device(config, target).await?;
 
-            let mut child = self.spawn_scrcpy(config).await?;
-            info!(
-                target = %config.target,
-                app = %config.app,
-                "scrcpy virtual display started; press Ctrl+C to stop"
-            );
+            let mut child = self.spawn_scrcpy(target, app, config).await?;
+            info!(target, app, "scrcpy virtual display started; press Ctrl+C to stop");
 
             let exit_reason = Self::wait_for_exit(&mut child).await;
             Self::reap_child(&mut child).await;
@@ -301,8 +318,8 @@ mod tests {
     fn config(raw_args: &[&str], params: &[(&str, &str)]) -> ResolvedConfig {
         ResolvedConfig {
             transporter: "adb".into(),
-            target: "10.0.0.8:5555".into(),
-            app: "com.termux".into(),
+            target: Some("10.0.0.8:5555".into()),
+            app: Some("com.termux".into()),
             params: params
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -348,7 +365,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            AndroidAdbTransporter::scrcpy_args(&cfg).unwrap(),
+            AndroidAdbTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap(),
             vec![
                 "-s",
                 "10.0.0.8:5555",
@@ -369,7 +386,7 @@ mod tests {
     #[test]
     fn minimal_config_has_no_extra_flags() {
         let cfg = config(&[], &[]);
-        let args = AndroidAdbTransporter::scrcpy_args(&cfg).unwrap();
+        let args = AndroidAdbTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap();
         assert_eq!(args.last().map(String::as_str), Some("8M"));
         assert!(!args.contains(&"--no-vd-destroy-content".to_string()));
     }

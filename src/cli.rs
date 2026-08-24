@@ -113,10 +113,10 @@ pub enum ProfileAction {
         name: String,
         /// Connection protocol
         transporter: String,
-        /// Target address
-        target: String,
-        /// App identifier
-        app: String,
+        /// Address slot (required by most transporters)
+        target: Option<String>,
+        /// Content slot (optional, per transporter)
+        app: Option<String>,
     },
     /// List saved profiles.
     List,
@@ -178,8 +178,8 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
         .unwrap_or_else(|| "adb".to_string());
     let target = args
         .target
-        .or_else(|| profile.as_ref().map(|p| p.target.clone()))
-        .ok_or(AppError::MissingTarget)?;
+        .or_else(|| profile.as_ref().and_then(|p| p.target.clone()))
+        .ok_or_else(|| AppError::Usage("appcast list --target <ADDR>".into()))?;
     let params = profile.map(|p| p.params).unwrap_or_default();
 
     let transporter = transporters::default_registry().get(&transporter_name)?;
@@ -203,8 +203,7 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
                 app,
                 params: HashMap::new(),
                 raw_args: Vec::new(),
-            };
-            let path = profile::save_profile(&name, &new_profile)?;
+            };            let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
         }
         ProfileAction::List => {
@@ -231,26 +230,23 @@ fn load_optional_profile(name: Option<&str>) -> Result<Option<Profile>, AppError
 }
 
 /// Priority-stack merge (highest → lowest):
-/// 1. positional trio  2. dedicated trio options  3. `--param`
-/// 4. profile fields (`transporter/target/app/params/raw_args`).
+/// 1. positional slots  2. dedicated slot options (`--transporter/--target/--app`)
+/// 3. `--param` overrides (per-key)  4. profile fields.
 ///
-/// There are no typed display knobs here anymore: resolution/fps/bit_rate
-/// are plain params, interpreted (with defaults) by the selected backend.
+/// The core never validates addressing arity: `target`/`app` stay `Option`
+/// and each backend rejects what it cannot work with, using its own usage
+/// text. Display knobs (resolution/fps/bit_rate) are plain params,
+/// interpreted — with defaults — by the selected backend.
 fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConfig, AppError> {
     // Explode the profile into an Option-view so every field can participate
     // in its own `.or(...)` chain independently.
     let (p_transporter, p_target, p_app, mut params, p_raw_args) = match profile {
-        Some(p) => (
-            Some(p.transporter),
-            Some(p.target),
-            Some(p.app),
-            p.params,
-            p.raw_args,
-        ),
+        Some(p) => (Some(p.transporter), p.target, p.app, p.params, p.raw_args),
         None => (None, None, None, HashMap::new(), Vec::new()),
     };
 
-    // ---- core trio: three-step or-chain, error when fully empty ----
+    // ---- addressing slots: pure or-chain; arity validation belongs to the
+    //      selected backend, which owns its own usage message ----
     let transporter = args
         .positional_transporter
         .clone()
@@ -262,15 +258,13 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
         .positional_target
         .clone()
         .or_else(|| args.target.clone())
-        .or(p_target)
-        .ok_or(AppError::MissingTarget)?;
+        .or(p_target);
 
     let app = args
         .positional_app
         .clone()
         .or_else(|| args.app.clone())
-        .or(p_app)
-        .ok_or(AppError::MissingApp)?;
+        .or(p_app);
 
     // ---- extension params: profile params form the base, then each
     //      `--param KEY=VALUE` overrides the same-named key ----
@@ -301,13 +295,14 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
 /// Render the final config back into one copy-pasteable shell line
 /// (pure text output — never a script or binary file).
 fn render_snapshot(config: &ResolvedConfig) -> String {
-    let mut parts = vec![
-        "appcast".to_string(),
-        "run".to_string(),
-        shell_quote(&config.transporter),
-        shell_quote(&config.target),
-        shell_quote(&config.app),
-    ];
+    let mut parts = vec!["appcast".to_string(), "run".to_string()];
+    parts.push(shell_quote(&config.transporter));
+    if let Some(target) = &config.target {
+        parts.push(shell_quote(target));
+    }
+    if let Some(app) = &config.app {
+        parts.push(shell_quote(app));
+    }
 
     // Deterministic ordering makes snapshots diff-friendly.
     let mut keys: Vec<&String> = config.params.keys().collect();
@@ -355,8 +350,8 @@ mod tests {
     fn sample_profile() -> Profile {
         Profile {
             transporter: "ssh-x11".into(),
-            target: "old-host".into(),
-            app: "/usr/bin/firefox".into(),
+            target: Some("old-host".into()),
+            app: Some("/usr/bin/firefox".into()),
             params: HashMap::from([
                 ("port".to_string(), "22".to_string()),
                 ("keep".to_string(), "yes".to_string()),
@@ -373,8 +368,8 @@ mod tests {
 
         let config = merge_config(&args, Some(sample_profile())).unwrap();
         assert_eq!(config.transporter, "adb");
-        assert_eq!(config.target, "dev1");
-        assert_eq!(config.app, "com.a.b");
+        assert_eq!(config.target.as_deref(), Some("dev1"));
+        assert_eq!(config.app.as_deref(), Some("com.a.b"));
         // Untouched fields still flow through from lower-priority layers:
         assert_eq!(config.param("port"), Some("22"));
         assert_eq!(config.raw_args, vec!["--keep-active"]);
@@ -390,6 +385,29 @@ mod tests {
     }
 
     #[test]
+    fn slots_may_stay_absent_for_slotless_backends() {
+        // e.g. a web transporter needs only (transporter, target=url);
+        // the core must not reject the missing app slot — arity is the
+        // backend's business.
+        let args = RunArgs {
+            positional_transporter: Some("web".into()),
+            positional_target: Some("https://example.com".into()),
+            ..RunArgs::default()
+        };
+        let config = merge_config(&args, None).unwrap();
+        assert_eq!(config.target.as_deref(), Some("https://example.com"));
+        assert!(config.app.is_none());
+    }
+
+    #[test]
+    fn missing_transporter_is_the_only_core_level_error() {
+        assert!(matches!(
+            merge_config(&RunArgs::default(), None),
+            Err(AppError::MissingTransporter)
+        ));
+    }
+
+    #[test]
     fn param_overrides_profile_param_only() {
         let mut args = positional("adb", "d", "p");
         args.extra_params = vec!["port=2222".into()];
@@ -399,22 +417,6 @@ mod tests {
         let config = merge_config(&args, Some(profile)).unwrap();
         assert_eq!(config.param("port"), Some("2222")); // overridden
         assert_eq!(config.param("keep"), Some("yes")); // preserved
-    }
-
-    #[test]
-    fn missing_fields_produce_precise_errors() {
-        assert!(matches!(
-            merge_config(&RunArgs::default(), None),
-            Err(AppError::MissingTransporter)
-        ));
-        let partial = RunArgs {
-            positional_transporter: Some("adb".into()),
-            ..RunArgs::default()
-        };
-        assert!(matches!(
-            merge_config(&partial, None),
-            Err(AppError::MissingTarget)
-        ));
     }
 
     #[test]

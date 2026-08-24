@@ -68,12 +68,15 @@ Download `windows-x86_64.exe` from
 
 ## Usage
 
+Addressing slots are per-transporter: adb needs `<TARGET> <APP>`, other
+transporters may need fewer (e.g. a web one takes just a URL).
+
 ```bash
-# Cast an app (positional trio, fully stateless)
+# Cast an app (stateless one-liner)
 appcast run adb <serial|ip:port> <package>
 
 # Expose any scrcpy option via passthrough (appended verbatim)
-appcast run adb DUMMY com.termux --resolution 1280x960 \
+appcast run adb DUMMY com.termux --param resolution=1280x960 \
     -- --no-vd-destroy-content -x --video-codec=h265
 
 # Print the merged command line instead of running it
@@ -89,7 +92,8 @@ appcast run --profile qq
 ```
 
 Config merge priority (highest wins):
-positional args > dedicated options > `--param` > profile fields > profile `params`/`raw_args` > defaults.
+positional slots > dedicated slot options (`--transporter/--target/--app`)
+> `--param` > profile fields (`params`/`raw_args` included).
 
 Options: `--profile`, `--transporter`, `--target`, `--app`,
 `--log-level`, `--param KEY=VALUE` (repeatable),

@@ -11,11 +11,10 @@ pub enum AppError {
     )]
     MissingTransporter,
 
-    #[error("missing target: pass it positionally after the transporter, or via --target / --profile")]
-    MissingTarget,
-
-    #[error("missing app identifier: pass it positionally, or via --app / --profile")]
-    MissingApp,
+    /// Authored by the backend that misses it — the core does not know which
+    /// addressing slots each transporter requires.
+    #[error("usage: {0}")]
+    Usage(String),
 
     #[error("unknown transporter `{0}` (built-in: adb, ssh-x11, waypipe)")]
     UnknownTransporter(String),

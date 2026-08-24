@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::AppError;
 
-/// A saved parameter bundle. The three core fields are required; everything
-/// else defaults so hand-written YAML stays minimal.
+/// A saved parameter bundle. `transporter` is required; the addressing slots
+/// and everything else default, so hand-written YAML stays minimal.
 ///
 /// Backend-specific knobs (resolution, fps, bit_rate, paths, ...) live in
 /// `params` — the selected backend interprets them and owns the defaults.
@@ -21,12 +21,14 @@ use crate::core::error::AppError;
 /// keep loading fine; those keys are ignored.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Profile {
-    /// `"adb"` | `"ssh-x11"` | `"waypipe"`.
+    /// `"adb"` | `"ssh-x11"` | `"waypipe"` | ...
     pub transporter: String,
-    /// Device serial / host address.
-    pub target: String,
-    /// Backend-specific app identifier.
-    pub app: String,
+    /// Address slot ("where"); optional — required by most transporters.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// Content slot ("what to open there"); optional per transporter.
+    #[serde(default)]
+    pub app: Option<String>,
     /// Free-form extension params, overridable key-by-key via `--param`.
     #[serde(default)]
     pub params: HashMap<String, String>,
@@ -39,6 +41,7 @@ pub struct Profile {
 /// Skeleton written by `profile edit` when the profile does not exist yet.
 pub const PROFILE_TEMPLATE: &str = r#"# AppCast profile
 transporter: adb
+# Which slots are required depends on the transporter (adb needs both):
 target: ""
 app: ""
 # Backend params — interpreted by the selected transporter; unset keys fall
@@ -174,8 +177,8 @@ mod tests {
     fn sample() -> Profile {
         Profile {
             transporter: "adb".into(),
-            target: "emulator-5554".into(),
-            app: "com.tencent.mm".into(),
+            target: Some("emulator-5554".into()),
+            app: Some("com.tencent.mm".into()),
             params: HashMap::from([("adb_path".to_string(), "/custom/adb".to_string())]),
             raw_args: vec![],
         }
@@ -245,7 +248,7 @@ params:
   keep: yes
 "#;
         let parsed: Profile = serde_yaml::from_str(legacy).unwrap();
-        assert_eq!(parsed.target, "serial");
+        assert_eq!(parsed.target.as_deref(), Some("serial"));
         assert!(parsed.params.contains_key("keep"));
     }
 }

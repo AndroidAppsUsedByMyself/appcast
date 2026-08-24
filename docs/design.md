@@ -26,19 +26,35 @@ universal addressing trio; every backend-specific knob travels through
 
 ## Decision log
 
-### D1 · The `app` slot stays positional
+### D1 · Addressing slots are backend-defined schema, core carries them opaquely
 
-`(TRANSPORTER, TARGET, APP)` is the domain model of the tool: protocol,
-machine, application. Every conceivable backend needs all three, so they are
-core's job. The split of responsibilities is:
+The tool's addressing model is a pair of optional slots plus a protocol:
 
-- the **slot** is universal and carried by the core;
-- the **meaning** is backend-defined (adb → package name, ssh-x11 →
-  executable path, waypipe → .desktop entry).
+```text
+appcast run <TRANSPORTER> [<TARGET>] [<APP>]
+#                        └─ "where"   └─ "what to open there"
+```
 
-Moving `app` into `--param` would break the stateless one-liner promise
-(`appcast run adb <serial> <pkg>`) and demote the domain model to stringly
-typed config. Rejected.
+Different transporters need different arities:
+
+| transporter | slots needed | mapping |
+|---|---|---|
+| adb/scrcpy | target + app | device serial → package name |
+| ssh-x11 / waypipe | target + app | host → executable path |
+| web/webview (future) | target only | URL |
+| vnc (future) | target only | `host:display` |
+| local-window (future) | app only | window title/id |
+
+Therefore the **core never validates arity**: `target`/`app` are
+`Option<String>` end-to-end, and each backend rejects what it cannot work
+with using its own usage text (`AppError::Usage`). The only core-level error
+is `MissingTransporter` (the registry lookup needs it).
+
+What the core *does* guarantee: slot positions are stable and merge with a
+fixed priority (D5), so muscle memory transfers between backends. Moving
+`app` into `--param`, or making the trio mandatory in the CLI, were both
+considered and rejected — the former demotes addressing into stringly typed
+config, the latter invents requirements no universal truth supports.
 
 ### D2 · Typed display knobs were demoted to params
 

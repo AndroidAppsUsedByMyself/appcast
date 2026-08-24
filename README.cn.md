@@ -67,12 +67,15 @@ pkg update && pkg install appcast
 
 ## 使用
 
+寻址槽位因 transporter 而异：adb 需要 `<TARGET> <APP>`，其他后端可能更少
+（如未来的 web 只需一个 URL）。
+
 ```bash
-# 流转应用（位置三元组，完全无状态）
+# 流转应用（无状态一行命令）
 appcast run adb <序列号|ip:端口> <包名>
 
 # 通过透传使用任意 scrcpy 参数（原样追加）
-appcast run adb DUMMY com.termux --resolution 1280x960 \
+appcast run adb DUMMY com.termux --param resolution=1280x960 \
     -- --no-vd-destroy-content -x --video-codec=h265
 
 # 只输出合并后的完整命令行，不执行
@@ -88,7 +91,8 @@ appcast run --profile qq
 ```
 
 配置合并优先级（高者胜）：
-位置参数 > 专用选项 > `--param` > Profile 标准字段 > Profile `params`/`raw_args` > 内置默认。
+位置槽位 > 槽位专用选项（`--transporter/--target/--app`）
+> `--param` > Profile 字段（含 `params`/`raw_args`）。
 
 选项：`--profile`、`--transporter`、`--target`、`--app`、
 `--log-level`、`--param KEY=VALUE`（可重复）、
