@@ -24,6 +24,9 @@ scrcpy -s <目标> \
 关闭窗口或 Ctrl+C 即杀死 scrcpy，虚拟显示随之销毁。
 无手工 display 管理，也没有 `am start` 的权限坑。
 
+> 设计理由与决策记录：[docs/design.cn.md](docs/design.cn.md)
+> （[English](docs/design.md)）。
+
 ## 环境要求
 
 - PATH 中有 `adb`
@@ -87,12 +90,12 @@ appcast run --profile qq
 配置合并优先级（高者胜）：
 位置参数 > 专用选项 > `--param` > Profile 标准字段 > Profile `params`/`raw_args` > 内置默认。
 
-选项：`--profile`、`--transporter`、`--target`、`--app`、`--resolution 宽x高`、
-`--fps`、`--bit-rate`（Mbps）、`--log-level`、`--param KEY=VALUE`（可重复）、
+选项：`--profile`、`--transporter`、`--target`、`--app`、
+`--log-level`、`--param KEY=VALUE`（可重复）、
 `--` 透传（非空时覆盖 Profile 的 `raw_args`）。
 
-后端扩展参数（`--param`）：`adb_path`、`scrcpy_path`。未识别的键会警告并忽略——
-它们是自定义 transporter 的扩展通道。
+后端扩展参数（`--param`）：`resolution`、`fps`、`bit_rate`、`adb_path`、
+`scrcpy_path`。未识别的键会警告并忽略——它们是自定义 transporter 的扩展通道。
 
 > 不支持 `--activity`：应用由 scrcpy 自行启动（`--start-app` 以整包为单位）。
 

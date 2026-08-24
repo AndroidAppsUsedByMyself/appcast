@@ -11,14 +11,21 @@
 //!        [--no-vd-destroy-content] --max-fps <fps> --video-bit-rate <n>M
 //! ```
 //!
-//! Tuning params (via `--param` / profile `params`):
+//! Tuning params (via `--param` / profile `params`) — this backend owns both
+//! interpretation and defaults:
 //! - `adb_path`, `scrcpy_path`: custom binaries
+//! - `resolution`: `<W>x<H>` for the virtual display (default `1920x1080`)
+//! - `fps`: frame rate cap (default `60`)
+//! - `bit_rate`: video bit rate in Mbps (default `8`, sent as `<n>M`)
 //!
 //! Everything else scrcpy offers goes through raw args after `--`, appended
 //! verbatim to the command line (e.g. `-- --no-vd-destroy-content
 //! --video-codec=h265 -x`). Later duplicates win per scrcpy's own parser, so
-//! explicit overrides are possible. `--activity` remains rejected: apps are
-//! started by scrcpy itself, there is no `am start` invocation to configure.
+//! explicit overrides are possible.
+//!
+//! Apps are started whole-package via `--start-app`; intent-level launching
+//! (`-a/-d/-t/--es ...`) would require an `am start` pipeline — a separate
+//! transporter for forks to build on top of the same trait.
 
 use std::collections::HashMap;
 use std::env::consts::EXE_SUFFIX;
@@ -28,14 +35,19 @@ use tokio::process::{Child, Command};
 use tracing::{debug, info, warn};
 
 use crate::core::error::AppError;
-use crate::core::transporter::{resolution_parts, BoxFut, ResolvedConfig, Transporter};
+use crate::core::transporter::{BoxFut, ResolvedConfig, Transporter};
 
 /// The adb + scrcpy virtual-display backend (the only implemented backend).
 pub struct AndroidAdbTransporter;
 
 /// Param keys this backend actually interprets; anything else triggers a
 /// warning (typos fail loudly, forks can extend the set in their own backend).
-const KNOWN_PARAMS: &[&str] = &["adb_path", "scrcpy_path"];
+const KNOWN_PARAMS: &[&str] = &["adb_path", "scrcpy_path", "resolution", "fps", "bit_rate"];
+
+/// Backend-owned defaults, applied whenever the matching param is absent.
+const DEFAULT_RESOLUTION: (u32, u32) = (1920, 1080);
+const DEFAULT_FPS: u32 = 60;
+const DEFAULT_BIT_RATE_MBPS: u32 = 8;
 
 impl AndroidAdbTransporter {
     /// Collect param keys this backend does not interpret.
@@ -47,6 +59,42 @@ impl AndroidAdbTransporter {
             .filter(|k| !KNOWN_PARAMS.contains(&k.as_str()))
             .map(String::as_str)
             .collect()
+    }
+
+    /// Virtual display size: `resolution` param or the built-in default.
+    fn resolution(config: &ResolvedConfig) -> Result<(u32, u32), AppError> {
+        match config.param("resolution") {
+            None => Ok(DEFAULT_RESOLUTION),
+            Some(value) => parse_wxh(value),
+        }
+    }
+
+    /// Frame rate: `fps` param or the built-in default.
+    fn fps(config: &ResolvedConfig) -> Result<u32, AppError> {
+        match config.param("fps") {
+            None => Ok(DEFAULT_FPS),
+            Some(value) => value
+                .trim()
+                .parse()
+                .map_err(|_| AppError::InvalidParamValue {
+                    key: "fps".into(),
+                    value: value.into(),
+                }),
+        }
+    }
+
+    /// Bit rate in Mbps: `bit_rate` param or the built-in default.
+    fn bit_rate(config: &ResolvedConfig) -> Result<u32, AppError> {
+        match config.param("bit_rate") {
+            None => Ok(DEFAULT_BIT_RATE_MBPS),
+            Some(value) => value
+                .trim()
+                .parse()
+                .map_err(|_| AppError::InvalidParamValue {
+                    key: "bit_rate".into(),
+                    value: value.into(),
+                }),
+        }
     }
 
     /// Resolve the adb binary: `params["adb_path"]` wins, else plain `adb`
@@ -120,7 +168,9 @@ impl AndroidAdbTransporter {
     /// Build the scrcpy argument list (pure, unit-testable): fixed pipeline
     /// first, then the user's raw passthrough args verbatim at the tail.
     fn scrcpy_args(config: &ResolvedConfig) -> Result<Vec<String>, AppError> {
-        let (width, height) = resolution_parts(&config.resolution)?;
+        let (width, height) = Self::resolution(config)?;
+        let fps = Self::fps(config)?;
+        let bit_rate = Self::bit_rate(config)?;
 
         let mut args = vec![
             "-s".to_string(),
@@ -129,9 +179,9 @@ impl AndroidAdbTransporter {
             format!("--start-app={}", config.app),
         ];
         args.push("--max-fps".to_string());
-        args.push(config.fps.to_string());
+        args.push(fps.to_string());
         args.push("--video-bit-rate".to_string());
-        args.push(format!("{}M", config.bit_rate));
+        args.push(format!("{bit_rate}M"));
         // Passthrough: every remaining scrcpy option, appended verbatim.
         args.extend(config.raw_args.iter().cloned());
         Ok(args)
@@ -187,14 +237,7 @@ impl Transporter for AndroidAdbTransporter {
 
             // Surface likely typos in --param keys (they would be inert).
             for key in Self::unknown_param_keys(&config.params) {
-                warn!(key, "unknown param for adb backend (known: adb_path, scrcpy_path); ignoring");
-            }
-
-            // Activity targeting belongs to the removed `am start` pipeline.
-            if let Some(activity) = &config.activity {
-                return Err(AppError::BackendError(format!(
-                    "--activity `{activity}` is not supported: apps are started by scrcpy itself (--start-app)"
-                )));
+                warn!(key, "unknown param for adb backend (known: adb_path, scrcpy_path, resolution, fps, bit_rate); ignoring");
             }
 
             self.check_device(config).await?;
@@ -239,6 +282,18 @@ impl Transporter for AndroidAdbTransporter {
     }
 }
 
+/// Parse a `"WxH"` string into its `(width, height)` components.
+///
+/// # Errors
+/// [`AppError::InvalidResolutionFormat`] when the input is not `<u32>x<u32>`.
+fn parse_wxh(value: &str) -> Result<(u32, u32), AppError> {
+    let invalid = || AppError::InvalidResolutionFormat(value.to_string());
+    let (w, h) = value.split_once('x').ok_or_else(invalid)?;
+    let w: u32 = w.trim().parse().map_err(|_| invalid())?;
+    let h: u32 = h.trim().parse().map_err(|_| invalid())?;
+    Ok((w, h))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,16 +303,42 @@ mod tests {
             transporter: "adb".into(),
             target: "10.0.0.8:5555".into(),
             app: "com.termux".into(),
-            activity: None,
-            resolution: "1920x1080".into(),
-            fps: 60,
-            bit_rate: 8,
             params: params
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             raw_args: raw_args.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn defaults_apply_when_params_absent() {
+        let cfg = config(&[], &[]);
+        assert_eq!(AndroidAdbTransporter::resolution(&cfg).unwrap(), (1920, 1080));
+        assert_eq!(AndroidAdbTransporter::fps(&cfg).unwrap(), 60);
+        assert_eq!(AndroidAdbTransporter::bit_rate(&cfg).unwrap(), 8);
+    }
+
+    #[test]
+    fn param_values_override_defaults_or_fail_loudly() {
+        let cfg = config(
+            &[],
+            &[("resolution", "1280x960"), ("fps", "90"), ("bit_rate", "12")],
+        );
+        assert_eq!(AndroidAdbTransporter::resolution(&cfg).unwrap(), (1280, 960));
+        assert_eq!(AndroidAdbTransporter::fps(&cfg).unwrap(), 90);
+        assert_eq!(AndroidAdbTransporter::bit_rate(&cfg).unwrap(), 12);
+
+        let bad = config(&[], &[("resolution", "big")]);
+        assert!(matches!(
+            AndroidAdbTransporter::resolution(&bad),
+            Err(AppError::InvalidResolutionFormat(_))
+        ));
+        let bad_fps = config(&[], &[("fps", "fast")]);
+        assert!(matches!(
+            AndroidAdbTransporter::fps(&bad_fps),
+            Err(AppError::InvalidParamValue { key, .. }) if key == "fps"
+        ));
     }
 
     #[test]
@@ -296,9 +377,22 @@ mod tests {
     #[test]
     fn flags_unknown_params_only() {
         let cfg = config(&[], &[("adb_path", "/x"), ("scrcpy_pathh", "typo")]);
-        assert_eq!(AndroidAdbTransporter::unknown_param_keys(&cfg.params), vec!["scrcpy_pathh"]);
+        assert_eq!(
+            AndroidAdbTransporter::unknown_param_keys(&cfg.params),
+            vec!["scrcpy_pathh"]
+        );
         assert!(AndroidAdbTransporter::unknown_param_keys(
-            &config(&[], &[("adb_path", "/x"), ("scrcpy_path", "/y")]).params
+            &config(
+                &[],
+                &[
+                    ("adb_path", "/x"),
+                    ("scrcpy_path", "/y"),
+                    ("resolution", "1x1"),
+                    ("fps", "30"),
+                    ("bit_rate", "4"),
+                ]
+            )
+            .params
         )
         .is_empty());
     }

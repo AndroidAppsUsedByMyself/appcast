@@ -15,6 +15,11 @@ pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// The final, fully merged configuration — the only input shape the core
 /// layer accepts. Frontends (CLI today, TUI/Web later) are responsible for
 /// producing it via the priority stack.
+///
+/// Deliberately thin: only the universal addressing trio plus two opaque
+/// extension channels. Everything backend-specific (resolution, fps,
+/// bit rate, paths, ...) travels inside `params` and is interpreted by the
+/// selected backend, which also owns the defaults.
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     /// Protocol name, e.g. `"adb"`.
@@ -23,17 +28,10 @@ pub struct ResolvedConfig {
     pub target: String,
     /// Backend-specific app identifier (Android package name, executable path...).
     pub app: String,
-    /// Explicit activity component; `None` lets backends auto-resolve.
-    pub activity: Option<String>,
-    /// Target resolution as `"WxH"` (e.g. `"1920x1080"`).
-    pub resolution: String,
-    /// Frame rate.
-    pub fps: u32,
-    /// Video bit rate in Mbps.
-    pub bit_rate: u32,
-    /// Free-form extension params (`adb_path`, ssh port, waypipe compression...).
+    /// Free-form extension params; keys are backend-defined
+    /// (`adb_path`, `resolution`, `fps`, ...).
     pub params: HashMap<String, String>,
-    /// Raw args to append verbatim to the backend launch command (`-- ...`).
+    /// Raw args to append verbatim to the backend command (`-- ...`).
     pub raw_args: Vec<String>,
 }
 
@@ -42,18 +40,6 @@ impl ResolvedConfig {
     pub fn param(&self, key: &str) -> Option<&str> {
         self.params.get(key).map(String::as_str)
     }
-}
-
-/// Parse a `"WxH"` string into its `(width, height)` components.
-///
-/// # Errors
-/// [`AppError::InvalidResolutionFormat`] when the input is not `<u32>x<u32>`.
-pub fn resolution_parts(resolution: &str) -> Result<(u32, u32), AppError> {
-    let invalid = || AppError::InvalidResolutionFormat(resolution.to_string());
-    let (w, h) = resolution.split_once('x').ok_or_else(invalid)?;
-    let w: u32 = w.trim().parse().map_err(|_| invalid())?;
-    let h: u32 = h.trim().parse().map_err(|_| invalid())?;
-    Ok((w, h))
 }
 
 /// A "cast one app to this desktop" backend (adb+scrcpy, ssh-x11, waypipe...).
@@ -75,31 +61,4 @@ pub trait Transporter: Send + Sync {
         target: &'a str,
         params: &'a HashMap<String, String>,
     ) -> BoxFut<'a, Result<Vec<String>, AppError>>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn splits_resolution_into_parts() {
-        assert_eq!(resolution_parts("1920x1080").unwrap(), (1920, 1080));
-        assert_eq!(resolution_parts("1080x1920").unwrap(), (1080, 1920));
-    }
-
-    #[test]
-    fn malformed_resolution_is_rejected() {
-        assert!(matches!(
-            resolution_parts("abc"),
-            Err(AppError::InvalidResolutionFormat(_))
-        ));
-        assert!(matches!(
-            resolution_parts("1920"),
-            Err(AppError::InvalidResolutionFormat(_))
-        ));
-        assert!(matches!(
-            resolution_parts("ax1080"),
-            Err(AppError::InvalidResolutionFormat(_))
-        ));
-    }
 }

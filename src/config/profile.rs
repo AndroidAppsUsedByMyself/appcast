@@ -14,6 +14,11 @@ use crate::core::error::AppError;
 
 /// A saved parameter bundle. The three core fields are required; everything
 /// else defaults so hand-written YAML stays minimal.
+///
+/// Backend-specific knobs (resolution, fps, bit_rate, paths, ...) live in
+/// `params` — the selected backend interprets them and owns the defaults.
+/// Legacy profiles that still carry top-level `resolution:`/`fps:`/... keys
+/// keep loading fine; those keys are ignored.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Profile {
     /// `"adb"` | `"ssh-x11"` | `"waypipe"`.
@@ -22,15 +27,6 @@ pub struct Profile {
     pub target: String,
     /// Backend-specific app identifier.
     pub app: String,
-    /// adb-only explicit activity; `None` → auto-resolve launcher activity.
-    #[serde(default)]
-    pub activity: Option<String>,
-    #[serde(default = "default_resolution")]
-    pub resolution: String,
-    #[serde(default = "default_fps")]
-    pub fps: u32,
-    #[serde(default = "default_bitrate")]
-    pub bit_rate: u32,
     /// Free-form extension params, overridable key-by-key via `--param`.
     #[serde(default)]
     pub params: HashMap<String, String>,
@@ -40,29 +36,19 @@ pub struct Profile {
     pub raw_args: Vec<String>,
 }
 
-pub fn default_resolution() -> String {
-    "1920x1080".to_string()
-}
-
-pub fn default_fps() -> u32 {
-    60
-}
-
-pub fn default_bitrate() -> u32 {
-    8
-}
-
 /// Skeleton written by `profile edit` when the profile does not exist yet.
 pub const PROFILE_TEMPLATE: &str = r#"# AppCast profile
 transporter: adb
 target: ""
 app: ""
-# activity: .MainActivity   # leave unset to auto-resolve the launcher activity
-resolution: 1920x1080
-fps: 60
-bit_rate: 8                 # Mbps
-params: {}
-# raw_args: ["--video-codec=h265", "-x"]   # passthrough to the backend
+# Backend params — interpreted by the selected transporter; unset keys fall
+# back to backend defaults. adb/scrcpy understands:
+params:
+  # resolution: 1920x1080   # virtual display size, <W>x<H>
+  # fps: 60                 # frame rate cap
+  # bit_rate: 8             # video bit rate in Mbps
+  # adb_path / scrcpy_path: custom binaries
+raw_args: []                  # verbatim scrcpy flags, e.g. ["-x", "--no-audio"]
 "#;
 
 /// `$XDG_CONFIG_HOME/appcast` root directory.
@@ -190,10 +176,6 @@ mod tests {
             transporter: "adb".into(),
             target: "emulator-5554".into(),
             app: "com.tencent.mm".into(),
-            activity: Some(".LaunchUI".into()),
-            resolution: default_resolution(),
-            fps: default_fps(),
-            bit_rate: default_bitrate(),
             params: HashMap::from([("adb_path".to_string(), "/custom/adb".to_string())]),
             raw_args: vec![],
         }
@@ -241,9 +223,29 @@ mod tests {
     #[test]
     fn template_parses_into_valid_profile() {
         let parsed: Profile = serde_yaml::from_str(PROFILE_TEMPLATE).unwrap();
-        assert_eq!(parsed.resolution, "1920x1080");
-        assert_eq!(parsed.fps, 60);
-        assert_eq!(parsed.bit_rate, 8);
-        assert!(parsed.activity.is_none());
+        assert_eq!(parsed.transporter, "adb");
+        assert!(parsed.params.is_empty());
+        assert!(parsed.raw_args.is_empty());
+    }
+
+    #[test]
+    fn legacy_profile_fields_are_tolerated_and_ignored() {
+        // Pre-slim profiles carried typed top-level knobs; they must still
+        // load (serde ignores unknown fields) with the values dropped — the
+        // backend defaults take over instead.
+        let legacy = r#"
+transporter: adb
+target: serial
+app: com.a.b
+activity: .Main
+resolution: 1280x720
+fps: 30
+bit_rate: 4
+params:
+  keep: yes
+"#;
+        let parsed: Profile = serde_yaml::from_str(legacy).unwrap();
+        assert_eq!(parsed.target, "serial");
+        assert!(parsed.params.contains_key("keep"));
     }
 }

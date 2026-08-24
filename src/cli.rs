@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::config::profile::{self, Profile};
 use crate::core::error::AppError;
-use crate::core::transporter::{resolution_parts, ResolvedConfig};
+use crate::core::transporter::ResolvedConfig;
 use crate::core::transporters;
 use crate::utils::logger;
 
@@ -42,10 +42,10 @@ pub enum Command {
 
 /// Shared argument surface of `run` and `snapshot`.
 ///
-/// Positional `<TRANSPORTER> <TARGET> <APP>` exist *alongside* their
-/// long-option twins on purpose: positionals serve the stateless
-/// one-liner use case, options serve "tweak a profile" use case, and
-/// positionals unconditionally win (ultimate priority).
+/// The CLI surface stays deliberately thin: the universal addressing trio
+/// (`<TRANSPORTER> <TARGET> <APP>` plus their `--` twins) and two opaque
+/// channels (`--param`, `--`). Everything backend-specific travels as
+/// params — backends interpret them and own their defaults.
 #[derive(Debug, Default, Args)]
 pub struct RunArgs {
     // ---- positional trio (priority 1) ----
@@ -59,7 +59,7 @@ pub struct RunArgs {
     #[arg(value_name = "APP")]
     pub positional_app: Option<String>,
 
-    // ---- dedicated options (priority 2) ----
+    // ---- dedicated trio options (priority 2) ----
     /// Override connection protocol
     #[arg(long = "transporter", value_name = "TYPE")]
     pub transporter: Option<String>,
@@ -69,25 +69,14 @@ pub struct RunArgs {
     /// Override app identifier
     #[arg(long = "app", value_name = "IDENTIFIER")]
     pub app: Option<String>,
-    /// Explicit activity (adb only; `.Main` expands to `<pkg>.Main`)
-    #[arg(long, value_name = "ACTIVITY")]
-    pub activity: Option<String>,
-    /// Override resolution as WxH (e.g. 1920x1080)
-    #[arg(long, value_name = "WXH")]
-    pub resolution: Option<String>,
-    /// Override frame rate
-    #[arg(long, value_name = "FPS")]
-    pub fps: Option<u32>,
-    /// Override video bit rate in Mbps
-    #[arg(long = "bit-rate", value_name = "MBPS")]
-    pub bit_rate: Option<u32>,
 
     /// Log level: trace|debug|info|error (RUST_LOG still wins)
     #[arg(long = "log-level", value_name = "LEVEL")]
     pub log_level: Option<String>,
 
-    // ---- universal extension params (priority 3) ----
-    /// Extra backend param KEY=VALUE; repeatable; overrides profile params
+    // ---- backend params (priority 3) ----
+    /// Backend param KEY=VALUE; repeatable; overrides profile params.
+    /// adb/scrcpy knows: resolution, fps, bit_rate, adb_path, scrcpy_path
     #[arg(long = "param", value_name = "KEY=VALUE")]
     pub extra_params: Vec<String>,
 
@@ -212,10 +201,6 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
                 transporter,
                 target,
                 app,
-                activity: None,
-                resolution: profile::default_resolution(),
-                fps: profile::default_fps(),
-                bit_rate: profile::default_bitrate(),
                 params: HashMap::new(),
                 raw_args: Vec::new(),
             };
@@ -246,37 +231,23 @@ fn load_optional_profile(name: Option<&str>) -> Result<Option<Profile>, AppError
 }
 
 /// Priority-stack merge (highest → lowest):
-/// 1. positional trio  2. dedicated options  3. `--param`
-/// 4. profile standard fields  5. profile params  6. defaults/auto-resolve.
+/// 1. positional trio  2. dedicated trio options  3. `--param`
+/// 4. profile fields (`transporter/target/app/params/raw_args`).
 ///
-/// Activity is intentionally left unresolved here when absent: auto-resolution
-/// needs adb round-trips, which belong to the adb backend, not the frontend.
+/// There are no typed display knobs here anymore: resolution/fps/bit_rate
+/// are plain params, interpreted (with defaults) by the selected backend.
 fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConfig, AppError> {
     // Explode the profile into an Option-view so every field can participate
     // in its own `.or(...)` chain independently.
-    let (
-        p_transporter,
-        p_target,
-        p_app,
-        p_activity,
-        p_resolution,
-        p_fps,
-        p_bitrate,
-        mut params,
-        p_raw_args,
-    ) = match profile {
+    let (p_transporter, p_target, p_app, mut params, p_raw_args) = match profile {
         Some(p) => (
             Some(p.transporter),
             Some(p.target),
             Some(p.app),
-            p.activity,
-            Some(p.resolution),
-            Some(p.fps),
-            Some(p.bit_rate),
             p.params,
             p.raw_args,
         ),
-        None => (None, None, None, None, None, None, None, HashMap::new(), Vec::new()),
+        None => (None, None, None, HashMap::new(), Vec::new()),
     };
 
     // ---- core trio: three-step or-chain, error when fully empty ----
@@ -301,16 +272,6 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
         .or(p_app)
         .ok_or(AppError::MissingApp)?;
 
-    // ---- typed fields: option > profile > hardcoded default ----
-    let resolution = args
-        .resolution
-        .clone()
-        .or(p_resolution)
-        .unwrap_or_else(profile::default_resolution);
-    // Fail fast on malformed resolutions before any subprocess is spawned;
-    // the actual long-edge extraction happens later inside the adb backend.
-    resolution_parts(&resolution)?;
-
     // ---- extension params: profile params form the base, then each
     //      `--param KEY=VALUE` overrides the same-named key ----
     for kv in &args.extra_params {
@@ -332,13 +293,6 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
         transporter,
         target,
         app,
-        activity: args.activity.clone().or(p_activity),
-        resolution,
-        fps: args.fps.or(p_fps).unwrap_or_else(profile::default_fps),
-        bit_rate: args
-            .bit_rate
-            .or(p_bitrate)
-            .unwrap_or_else(profile::default_bitrate),
         params,
         raw_args,
     })
@@ -354,19 +308,6 @@ fn render_snapshot(config: &ResolvedConfig) -> String {
         shell_quote(&config.target),
         shell_quote(&config.app),
     ];
-
-    if let Some(activity) = &config.activity {
-        parts.push("--activity".into());
-        parts.push(shell_quote(activity));
-    }
-    for (flag, value) in [
-        ("--resolution", config.resolution.clone()),
-        ("--fps", config.fps.to_string()),
-        ("--bit-rate", config.bit_rate.to_string()),
-    ] {
-        parts.push(flag.into());
-        parts.push(value);
-    }
 
     // Deterministic ordering makes snapshots diff-friendly.
     let mut keys: Vec<&String> = config.params.keys().collect();
@@ -416,13 +357,10 @@ mod tests {
             transporter: "ssh-x11".into(),
             target: "old-host".into(),
             app: "/usr/bin/firefox".into(),
-            activity: Some(".MainActivity".into()),
-            resolution: "1280x720".into(),
-            fps: 30,
-            bit_rate: 4,
             params: HashMap::from([
                 ("port".to_string(), "22".to_string()),
                 ("keep".to_string(), "yes".to_string()),
+                ("fps".to_string(), "30".to_string()),
             ]),
             raw_args: vec!["--keep-active".to_string()],
         }
@@ -438,22 +376,17 @@ mod tests {
         assert_eq!(config.target, "dev1");
         assert_eq!(config.app, "com.a.b");
         // Untouched fields still flow through from lower-priority layers:
-        assert_eq!(config.activity.as_deref(), Some(".MainActivity"));
-        assert_eq!(config.fps, 30);
+        assert_eq!(config.param("port"), Some("22"));
+        assert_eq!(config.raw_args, vec!["--keep-active"]);
     }
 
     #[test]
-    fn option_overrides_profile_without_positional() {
-        let args = RunArgs {
-            bit_rate: Some(12),
-            ..RunArgs::default()
-        };
+    fn profile_fills_everything_when_cli_is_bare() {
+        let args = RunArgs::default();
 
-        let profile = sample_profile();
-        let config = merge_config(&args, Some(profile)).unwrap();
+        let config = merge_config(&args, Some(sample_profile())).unwrap();
         assert_eq!(config.transporter, "ssh-x11"); // from profile
-        assert_eq!(config.bit_rate, 12); // option beat profile's 4
-        assert_eq!(config.resolution, "1280x720"); // untouched profile field
+        assert_eq!(config.param("fps"), Some("30")); // backend knob via params
     }
 
     #[test]
@@ -466,26 +399,6 @@ mod tests {
         let config = merge_config(&args, Some(profile)).unwrap();
         assert_eq!(config.param("port"), Some("2222")); // overridden
         assert_eq!(config.param("keep"), Some("yes")); // preserved
-    }
-
-    #[test]
-    fn dedicated_bit_rate_wins_over_param_alias() {
-        let mut args = positional("adb", "d", "p");
-        args.bit_rate = Some(4);
-        args.extra_params = vec!["bit_rate=8".into()];
-
-        let config = merge_config(&args, None).unwrap();
-        // The strongly-typed field wins; the param alias is inert data.
-        assert_eq!(config.bit_rate, 4);
-    }
-
-    #[test]
-    fn defaults_apply_when_nothing_set() {
-        let config = merge_config(&positional("adb", "d", "p"), None).unwrap();
-        assert_eq!(config.resolution, "1920x1080");
-        assert_eq!(config.fps, 60);
-        assert_eq!(config.bit_rate, 8);
-        assert!(config.activity.is_none()); // backend will auto-resolve
     }
 
     #[test]
@@ -515,16 +428,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_resolution_fails_fast() {
-        let mut args = positional("adb", "d", "p");
-        args.resolution = Some("big".into());
-        assert!(matches!(
-            merge_config(&args, None),
-            Err(AppError::InvalidResolutionFormat(_))
-        ));
-    }
-
-    #[test]
     fn raw_args_profile_fallback_and_cli_override() {
         // No CLI passthrough → profile's raw_args flow through.
         let args = positional("adb", "d", "p");
@@ -541,8 +444,7 @@ mod tests {
     #[test]
     fn snapshot_line_round_trips_through_clap() {
         let mut args = positional("adb", "emulator-5554", "com.tencent.mm");
-        args.fps = Some(90);
-        args.extra_params = vec!["b=2".into(), "a=1".into()];
+        args.extra_params = vec!["b=2".into(), "a=1".into(), ("fps=90").into()];
         args.raw_args = vec!["-W".into()];
 
         let config = merge_config(&args, None).unwrap();
@@ -550,8 +452,7 @@ mod tests {
         assert_eq!(
             line,
             "appcast run adb emulator-5554 com.tencent.mm \
-             --resolution 1920x1080 --fps 90 --bit-rate 8 \
-             --param a=1 --param b=2 -- -W"
+             --param a=1 --param b=2 --param fps=90 -- -W"
         );
     }
 

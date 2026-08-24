@@ -41,6 +41,9 @@ pub enum AppError {
     #[error("invalid --param `{0}`: expected KEY=VALUE")]
     InvalidParamFormat(String),
 
+    #[error("invalid value for param `{key}`: `{value}`")]
+    InvalidParamValue { key: String, value: String },
+
     #[error("backend error: {0}")]
     BackendError(String),
 
