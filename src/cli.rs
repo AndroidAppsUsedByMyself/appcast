@@ -281,6 +281,10 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
             extra_params,
             raw_args,
         } => {
+            // Guard against slot-shift typos: an unknown transporter means
+            // the positionals were probably misaligned (e.g. name omitted).
+            transporters::default_registry().get(&transporter).map(|_| ())?;
+
             let mut params = HashMap::new();
             for kv in &extra_params {
                 let (key, value) = kv
@@ -289,14 +293,15 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
                 params.insert(key.to_string(), value.to_string());
             }
             let new_profile = Profile {
-                transporter,
+                transporter: transporter.clone(),
                 target,
                 app,
                 params,
-                raw_args,
+                raw_args: raw_args.clone(),
             };
             let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
+            println!("{}", render_save_summary(&new_profile));
         }
         ProfileAction::List { json } => {
             let names = profile::list_profiles()?;
@@ -336,6 +341,27 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Echo the parsed slots after saving so positional misalignment is
+/// immediately visible (`-` marks an absent slot).
+fn render_save_summary(profile: &Profile) -> String {
+    fn dash(value: &Option<String>) -> &str {
+        value.as_deref().unwrap_or("-")
+    }
+    format!(
+        "  transporter={} target={} app={}\n  params{{{}}} raw[{}]",
+        profile.transporter,
+        dash(&profile.target),
+        dash(&profile.app),
+        profile
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        profile.raw_args.join(" "),
+    )
 }
 
 /// Only touch the filesystem when `--profile` was actually passed
@@ -613,6 +639,32 @@ mod tests {
         assert!(json.contains(r#""name":"qq""#));
         assert!(json.contains(r#""transporter":"ssh-x11""#));
         assert!(json.contains(r#""raw_args":["--keep-active"]"#));
+    }
+
+    #[test]
+    fn save_summary_reflects_slots_and_extensions() {
+        use crate::config::profile::Profile;
+        let p = Profile {
+            transporter: "adb-scrcpy".into(),
+            target: Some("localhost:45555".into()),
+            app: Some("bin.mt.plus.canary".into()),
+            params: [("fps".to_string(), "90".to_string())].into_iter().collect(),
+            raw_args: vec!["--no-audio".into()],
+        };
+        assert_eq!(
+            render_save_summary(&p),
+            "  transporter=adb-scrcpy target=localhost:45555 app=bin.mt.plus.canary\n  \
+             params{fps=90} raw[--no-audio]"
+        );
+        // Absent slots render as dashes instead of empty strings.
+        let minimal = Profile {
+            transporter: "web".into(),
+            target: Some("https://x".into()),
+            app: None,
+            params: Default::default(),
+            raw_args: vec![],
+        };
+        assert!(render_save_summary(&minimal).contains("app=-"));
     }
 
     #[test]
