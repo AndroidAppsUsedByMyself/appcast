@@ -64,7 +64,7 @@ concepts, not universal ones (waypipe/VNC/RDP backends have different or no
 equivalents). They now travel as params:
 
 ```bash
-appcast run adb SERIAL com.app --param resolution=1280x960 --param fps=90
+appcast run adb-scrcpy SERIAL com.app --param resolution=1280x960 --param fps=90
 ```
 
 The adb/scrcpy backend interprets them and applies defaults

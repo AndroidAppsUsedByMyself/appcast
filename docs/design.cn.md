@@ -59,7 +59,7 @@ appcast run <TRANSPORTER> [<TARGET>] [<APP>]
 对应物、要么完全不同）。现在它们作为 params 传递：
 
 ```bash
-appcast run adb SERIAL com.app --param resolution=1280x960 --param fps=90
+appcast run adb-scrcpy SERIAL com.app --param resolution=1280x960 --param fps=90
 ```
 
 adb/scrcpy 后端负责解释并在缺省时应用内置默认值（`1920x1080`、`60`、
