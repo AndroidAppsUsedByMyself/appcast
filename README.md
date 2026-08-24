@@ -88,7 +88,8 @@ appcast list adb-scrcpy 10.0.0.8:5555 -l       # display name <TAB> id
 appcast list adb-scrcpy 10.0.0.8:5555 --json   # full structured entries
 
 # Profiles: save / list / edit ($EDITOR) / rm
-appcast profile save qq adb-scrcpy SERIAL com.tencent.mobileqq
+appcast profile save qq adb-scrcpy SERIAL com.tencent.mobileqq \
+    --param resolution=1280x960 -- --no-vd-destroy-content
 appcast profile edit qq
 appcast run --profile qq
 ```

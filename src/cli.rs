@@ -122,6 +122,10 @@ pub struct ListArgs {
 #[derive(Debug, Subcommand)]
 pub enum ProfileAction {
     /// Save arguments as a profile (overwrites an existing one).
+    ///
+    /// Accepts everything a run consumes except --profile itself: the
+    /// addressing slots plus --param/-- passthrough, so a saved profile
+    /// reproduces the full configuration.
     Save {
         /// Profile name
         name: String,
@@ -131,6 +135,12 @@ pub enum ProfileAction {
         target: Option<String>,
         /// Content slot (optional, per transporter)
         app: Option<String>,
+        /// Backend param KEY=VALUE; repeatable
+        #[arg(long = "param", value_name = "KEY=VALUE")]
+        extra_params: Vec<String>,
+        /// Raw args stored verbatim (`-- --no-audio -x`)
+        #[arg(last = true, value_name = "RAW_ARGS")]
+        raw_args: Vec<String>,
     },
     /// List saved profiles.
     List {
@@ -268,14 +278,24 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
             transporter,
             target,
             app,
+            extra_params,
+            raw_args,
         } => {
+            let mut params = HashMap::new();
+            for kv in &extra_params {
+                let (key, value) = kv
+                    .split_once('=')
+                    .ok_or_else(|| AppError::InvalidParamFormat(kv.clone()))?;
+                params.insert(key.to_string(), value.to_string());
+            }
             let new_profile = Profile {
                 transporter,
                 target,
                 app,
-                params: HashMap::new(),
-                raw_args: Vec::new(),
-            };            let path = profile::save_profile(&name, &new_profile)?;
+                params,
+                raw_args,
+            };
+            let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
         }
         ProfileAction::List { json } => {
