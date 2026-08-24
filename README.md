@@ -6,7 +6,7 @@ Cast a single Android app's screen into its own native window on this desktop,
 via one scrcpy virtual-display pipeline. The phone's main screen stays free.
 
 ```bash
-appcast run adb 10.0.0.8:5555 com.termux
+appcast run adb-scrcpy 10.0.0.8:5555 com.termux
 ```
 
 ## How it works
@@ -73,10 +73,10 @@ transporters may need fewer (e.g. a web one takes just a URL).
 
 ```bash
 # Cast an app (stateless one-liner)
-appcast run adb <serial|ip:port> <package>
+appcast run adb-scrcpy <serial|ip:port> <package>
 
 # Expose any scrcpy option via passthrough (appended verbatim)
-appcast run adb DUMMY com.termux --param resolution=1280x960 \
+appcast run adb-scrcpy DUMMY com.termux --param resolution=1280x960 \
     -- --no-vd-destroy-content -x --video-codec=h265
 
 # Print the merged command line instead of running it
@@ -86,7 +86,7 @@ appcast snapshot --profile qq
 appcast list --target 10.0.0.8:5555
 
 # Profiles: save / list / edit ($EDITOR) / rm
-appcast profile save qq adb SERIAL com.tencent.mobileqq
+appcast profile save qq adb-scrcpy SERIAL com.tencent.mobileqq
 appcast profile edit qq
 appcast run --profile qq
 ```
@@ -101,7 +101,8 @@ Options: `--profile`, `--transporter`, `--target`, `--app`,
 
 Backend params (`--param`): `resolution`, `fps`, `bit_rate`, `adb_path`,
 `scrcpy_path`. Unknown keys are warned about and ignored — they are the
-extension surface for custom transporters.
+extension surface for custom transporters. The `adb-scrcpy` backend requires
+**scrcpy >= 3.0** (checked at startup, with an explicit error message).
 
 > `--activity` is intentionally unsupported: apps are started by scrcpy
 > itself (`--start-app` targets whole packages).

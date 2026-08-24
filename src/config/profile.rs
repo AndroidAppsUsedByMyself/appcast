@@ -40,7 +40,7 @@ pub struct Profile {
 
 /// Skeleton written by `profile edit` when the profile does not exist yet.
 pub const PROFILE_TEMPLATE: &str = r#"# AppCast profile
-transporter: adb
+transporter: adb-scrcpy
 # Which slots are required depends on the transporter (adb needs both):
 target: ""
 app: ""
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn template_parses_into_valid_profile() {
         let parsed: Profile = serde_yaml::from_str(PROFILE_TEMPLATE).unwrap();
-        assert_eq!(parsed.transporter, "adb");
+        assert_eq!(parsed.transporter, "adb-scrcpy");
         assert!(parsed.params.is_empty());
         assert!(parsed.raw_args.is_empty());
     }

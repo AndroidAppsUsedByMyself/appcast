@@ -1,4 +1,4 @@
-//! `AndroidAdbTransporter` — cast an Android app into a local window.
+//! `AdbScrcpyTransporter` — cast an Android app into a local window.
 //!
 //! Single, battle-tested pipeline: one scrcpy (≥ 3) process creates the
 //! virtual display at the configured resolution and starts the app itself,
@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::env::consts::EXE_SUFFIX;
 use std::process::Stdio;
 
+use regex::Regex;
 use tokio::process::{Child, Command};
 use tracing::{debug, info, warn};
 
@@ -38,7 +39,7 @@ use crate::core::error::AppError;
 use crate::core::transporter::{BoxFut, ResolvedConfig, Transporter};
 
 /// The adb + scrcpy virtual-display backend (the only implemented backend).
-pub struct AndroidAdbTransporter;
+pub struct AdbScrcpyTransporter;
 
 /// Param keys this backend actually interprets; anything else triggers a
 /// warning (typos fail loudly, forks can extend the set in their own backend).
@@ -49,7 +50,10 @@ const DEFAULT_RESOLUTION: (u32, u32) = (1920, 1080);
 const DEFAULT_FPS: u32 = 60;
 const DEFAULT_BIT_RATE_MBPS: u32 = 8;
 
-impl AndroidAdbTransporter {
+/// First scrcpy release shipping `--new-display` / `--start-app`.
+const VD_MIN_MAJOR: u32 = 3;
+
+impl AdbScrcpyTransporter {
     /// Collect param keys this backend does not interpret.
     fn unknown_param_keys(
         params: &std::collections::HashMap<String, String>,
@@ -95,6 +99,35 @@ impl AndroidAdbTransporter {
                     value: value.into(),
                 }),
         }
+    }
+
+    /// Probe `scrcpy --version` and refuse to run when the installed build
+    /// predates virtual-display support (`--new-display` / `--start-app`,
+    /// scrcpy 3.0+). The version requirement belongs to this backend — the
+    /// core stays ignorant of scrcpy entirely.
+    async fn require_virtual_display_support(bin: &str) -> Result<(), AppError> {
+        let out = Command::new(bin)
+            .arg("--version")
+            .output()
+            .await
+            .map_err(|e| {
+                AppError::ScrcpyVersionUnknown(format!("cannot execute `{bin}`: {e}"))
+            })?;
+        let banner = String::from_utf8_lossy(&out.stdout).into_owned();
+        let major = parse_scrcpy_major(&banner).ok_or_else(|| {
+            AppError::ScrcpyVersionUnknown(format!(
+                "unrecognized banner: {}",
+                banner.lines().next().unwrap_or("").trim()
+            ))
+        })?;
+        if major < VD_MIN_MAJOR {
+            return Err(AppError::ScrcpyTooOld {
+                found: major,
+                required: VD_MIN_MAJOR,
+            });
+        }
+        debug!(scrcpy_major = major, "virtual displays supported");
+        Ok(())
     }
 
     /// Resolve the adb binary: `params["adb_path"]` wins, else plain `adb`
@@ -157,8 +190,7 @@ impl AndroidAdbTransporter {
     /// Sanity-check the package name: reject emptiness, path separators
     /// (`/`, `\`) and traversal-ish input so a Linux path like
     /// `/usr/bin/firefox` fails fast with a precise error.
-    fn validate_package_name(app: &str) -> Result<(), AppError> {
-        let looks_like_path = app.contains('/') || app.contains('\\') || app.contains("..");
+    fn validate_package_name(app: &str) -> Result<(), AppError> {        let looks_like_path = app.contains('/') || app.contains('\\') || app.contains("..");
         if app.is_empty() || looks_like_path || app.split_whitespace().count() != 1 {
             return Err(AppError::InvalidAppIdentifier(app.to_string()));
         }
@@ -234,7 +266,7 @@ impl AndroidAdbTransporter {
     }
 }
 
-impl Transporter for AndroidAdbTransporter {
+impl Transporter for AdbScrcpyTransporter {
     fn name(&self) -> &'static str {
         "adb"
     }
@@ -243,7 +275,7 @@ impl Transporter for AndroidAdbTransporter {
         Box::pin(async move {
             // This backend's addressing schema: both slots are required.
             // (Other transporters — e.g. a future web one — may need fewer.)
-            const USAGE: &str = "appcast run adb <serial|ip:port> <package>";
+            const USAGE: &str = "appcast run adb-scrcpy <serial|ip:port> <package>";
             let target = config
                 .target
                 .as_deref()
@@ -256,9 +288,14 @@ impl Transporter for AndroidAdbTransporter {
             // Fail fast on obviously-wrong identifiers before any subprocess.
             Self::validate_package_name(app)?;
 
+            // Virtual displays need scrcpy >= 3; fail with a clear message
+            // instead of an inscrutable scrcpy flag error later.
+            let scrcpy_bin = Self::scrcpy_bin(config);
+            Self::require_virtual_display_support(&scrcpy_bin).await?;
+
             // Surface likely typos in --param keys (they would be inert).
             for key in Self::unknown_param_keys(&config.params) {
-                warn!(key, "unknown param for adb backend (known: adb_path, scrcpy_path, resolution, fps, bit_rate); ignoring");
+                warn!(key, "unknown param for adb-scrcpy backend (known: adb_path, scrcpy_path, resolution, fps, bit_rate); ignoring");
             }
 
             self.check_device(config, target).await?;
@@ -299,6 +336,17 @@ impl Transporter for AndroidAdbTransporter {
     }
 }
 
+/// Parse the major version from a `scrcpy --version` banner
+/// (first line looks like `scrcpy 4.0 <https://...>`).
+fn parse_scrcpy_major(banner: &str) -> Option<u32> {
+    let re = Regex::new(r"(?m)^scrcpy v?(\d+)").expect("static regex is valid");
+    re.captures(banner)?
+        .get(1)?
+        .as_str()
+        .parse()
+        .ok()
+}
+
 /// Parse a `"WxH"` string into its `(width, height)` components.
 ///
 /// # Errors
@@ -331,9 +379,9 @@ mod tests {
     #[test]
     fn defaults_apply_when_params_absent() {
         let cfg = config(&[], &[]);
-        assert_eq!(AndroidAdbTransporter::resolution(&cfg).unwrap(), (1920, 1080));
-        assert_eq!(AndroidAdbTransporter::fps(&cfg).unwrap(), 60);
-        assert_eq!(AndroidAdbTransporter::bit_rate(&cfg).unwrap(), 8);
+        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1920, 1080));
+        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), 60);
+        assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), 8);
     }
 
     #[test]
@@ -342,18 +390,18 @@ mod tests {
             &[],
             &[("resolution", "1280x960"), ("fps", "90"), ("bit_rate", "12")],
         );
-        assert_eq!(AndroidAdbTransporter::resolution(&cfg).unwrap(), (1280, 960));
-        assert_eq!(AndroidAdbTransporter::fps(&cfg).unwrap(), 90);
-        assert_eq!(AndroidAdbTransporter::bit_rate(&cfg).unwrap(), 12);
+        assert_eq!(AdbScrcpyTransporter::resolution(&cfg).unwrap(), (1280, 960));
+        assert_eq!(AdbScrcpyTransporter::fps(&cfg).unwrap(), 90);
+        assert_eq!(AdbScrcpyTransporter::bit_rate(&cfg).unwrap(), 12);
 
         let bad = config(&[], &[("resolution", "big")]);
         assert!(matches!(
-            AndroidAdbTransporter::resolution(&bad),
+            AdbScrcpyTransporter::resolution(&bad),
             Err(AppError::InvalidResolutionFormat(_))
         ));
         let bad_fps = config(&[], &[("fps", "fast")]);
         assert!(matches!(
-            AndroidAdbTransporter::fps(&bad_fps),
+            AdbScrcpyTransporter::fps(&bad_fps),
             Err(AppError::InvalidParamValue { key, .. }) if key == "fps"
         ));
     }
@@ -365,7 +413,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            AndroidAdbTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap(),
+            AdbScrcpyTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap(),
             vec![
                 "-s",
                 "10.0.0.8:5555",
@@ -386,7 +434,7 @@ mod tests {
     #[test]
     fn minimal_config_has_no_extra_flags() {
         let cfg = config(&[], &[]);
-        let args = AndroidAdbTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap();
+        let args = AdbScrcpyTransporter::scrcpy_args("10.0.0.8:5555", "com.termux", &cfg).unwrap();
         assert_eq!(args.last().map(String::as_str), Some("8M"));
         assert!(!args.contains(&"--no-vd-destroy-content".to_string()));
     }
@@ -395,10 +443,10 @@ mod tests {
     fn flags_unknown_params_only() {
         let cfg = config(&[], &[("adb_path", "/x"), ("scrcpy_pathh", "typo")]);
         assert_eq!(
-            AndroidAdbTransporter::unknown_param_keys(&cfg.params),
+            AdbScrcpyTransporter::unknown_param_keys(&cfg.params),
             vec!["scrcpy_pathh"]
         );
-        assert!(AndroidAdbTransporter::unknown_param_keys(
+        assert!(AdbScrcpyTransporter::unknown_param_keys(
             &config(
                 &[],
                 &[
@@ -417,23 +465,23 @@ mod tests {
     #[test]
     fn rejects_pathlike_identifiers() {
         assert!(matches!(
-            AndroidAdbTransporter::validate_package_name("/usr/bin/firefox"),
+            AdbScrcpyTransporter::validate_package_name("/usr/bin/firefox"),
             Err(AppError::InvalidAppIdentifier(_))
         ));
         assert!(matches!(
-            AndroidAdbTransporter::validate_package_name("com/a"),
+            AdbScrcpyTransporter::validate_package_name("com/a"),
             Err(AppError::InvalidAppIdentifier(_))
         ));
         assert!(matches!(
-            AndroidAdbTransporter::validate_package_name(""),
+            AdbScrcpyTransporter::validate_package_name(""),
             Err(AppError::InvalidAppIdentifier(_))
         ));
         assert!(matches!(
-            AndroidAdbTransporter::validate_package_name("two words"),
+            AdbScrcpyTransporter::validate_package_name("two words"),
             Err(AppError::InvalidAppIdentifier(_))
         ));
         assert!(
-            AndroidAdbTransporter::validate_package_name("com.tencent.mm").is_ok(),
+            AdbScrcpyTransporter::validate_package_name("com.tencent.mm").is_ok(),
             "ordinary package names must pass"
         );
     }

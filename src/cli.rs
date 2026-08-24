@@ -175,7 +175,7 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
     let transporter_name = args
         .transporter
         .or_else(|| profile.as_ref().map(|p| p.transporter.clone()))
-        .unwrap_or_else(|| "adb".to_string());
+        .unwrap_or_else(|| "adb-scrcpy".to_string());
     let target = args
         .target
         .or_else(|| profile.as_ref().and_then(|p| p.target.clone()))

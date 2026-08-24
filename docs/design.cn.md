@@ -14,7 +14,7 @@ ResolvedConfig               ── {transporter, target, app, params, raw_args}
    │  registry.get(name)
    ▼
 Transporter trait（dyn）     ── name / run / list_apps
-   ├── adb      （scrcpy ≥3 虚拟显示；参数语义与默认值归它所有）
+   ├── adb-scrcpy  （scrcpy >=3 虚拟显示；参数语义与默认值归它所有）
    ├── ssh-x11  （占位）
    └── waypipe  （占位）
 ```
@@ -37,7 +37,7 @@ appcast run <TRANSPORTER> [<TARGET>] [<APP>]
 
 | transporter | 需要的槽位 | 映射 |
 |---|---|---|
-| adb/scrcpy | target + app | 设备序列号 → 包名 |
+| adb-scrcpy | target + app | 设备序列号 → 包名 |
 | ssh-x11 / waypipe | target + app | host → 可执行路径 |
 | web/webview（未来） | 仅 target | URL |
 | vnc（未来） | 仅 target | `host:display` |
@@ -115,6 +115,14 @@ Profile 值。
 
 除非给定 `--profile`，`appcast run` 绝不触碰文件系统。日志目录不可写时静默
 降级为仅 stderr。profiles 目录不存在等价于"没有 Profile"，绝不是错误。
+
+### D7 · 名字编码技术，不编码版本
+
+transporter 的注册名是 `adb-scrcpy`——平台加流水线技术——因此未来 fork 的
+`adb-amstart` 变体不会与它冲突。名字里刻意不放版本号：本后端依赖的是
+**能力集**（虚拟显示，scrcpy >= 3），而不是"scrcpy 3"；上游大版本持续演进，
+能力集却岿然不动。该要求由运行时守卫强制（会话启动时探测 `scrcpy --version`），
+失败时给出明确报错，而非事后一条难以理解的 flag 错误。
 
 ## Fork 扩展指南
 

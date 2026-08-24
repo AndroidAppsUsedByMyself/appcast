@@ -15,7 +15,7 @@ ResolvedConfig               ── {transporter, target, app, params, raw_args}
    │  registry.get(name)
    ▼
 Transporter trait (dyn)      ── name / run / list_apps
-   ├── adb      (scrcpy ≥3 virtual display; owns param semantics + defaults)
+   ├── adb-scrcpy  (scrcpy >=3 virtual display; owns params + defaults)
    ├── ssh-x11  (placeholder)
    └── waypipe  (placeholder)
 ```
@@ -39,7 +39,7 @@ Different transporters need different arities:
 
 | transporter | slots needed | mapping |
 |---|---|---|
-| adb/scrcpy | target + app | device serial → package name |
+| adb-scrcpy | target + app | device serial → package name |
 | ssh-x11 / waypipe | target + app | host → executable path |
 | web/webview (future) | target only | URL |
 | vnc (future) | target only | `host:display` |
@@ -126,6 +126,16 @@ non-empty CLI passthrough replaces the profile value wholesale.
 `appcast run` never touches the filesystem unless `--profile` is given.
 Logging degrades to stderr-only if `$XDG_STATE_HOME` is unwritable. A missing
 profiles directory reads as "no profiles", never an error.
+
+### D7 · Names encode technique; versions do not
+
+The transporter id is `adb-scrcpy` — platform plus pipeline technique — so a
+future fork's `adb-amstart` variant never collides with it. Version numbers
+are deliberately excluded from names: this backend depends on a *capability
+set* (virtual displays, scrcpy >= 3), not on "scrcpy 3", and upstream majors
+keep moving while the capability stays put. The requirement is enforced by a
+runtime guard (`scrcpy --version` probe at session start) that fails with an
+explicit message instead of an inscrutable flag error later.
 
 ## Extension guide for forks
 

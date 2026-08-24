@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error(
-        "missing transporter: pass it positionally (`appcast run adb <target> <app>`), \
+        "missing transporter: pass it positionally (`appcast run adb-scrcpy <target> <app>`), \
          or via --transporter / --profile"
     )]
     MissingTransporter,
@@ -16,6 +16,15 @@ pub enum AppError {
     #[error("usage: {0}")]
     Usage(String),
 
+    #[error(
+        "scrcpy >= {required} required for virtual-display support (found {found}); \
+         please upgrade scrcpy"
+    )]
+    ScrcpyTooOld { found: u32, required: u32 },
+
+    #[error("cannot determine scrcpy version: {0}")]
+    ScrcpyVersionUnknown(String),
+
     #[error("unknown transporter `{0}` (built-in: adb, ssh-x11, waypipe)")]
     UnknownTransporter(String),
 
@@ -23,8 +32,8 @@ pub enum AppError {
     DeviceNotFound(String),
 
     #[error(
-        "invalid app identifier `{0}`: for the adb backend this must be an Android package \
-         name such as `com.example.app`, not a path"
+        "invalid app identifier `{0}`: for the adb-scrcpy backend this must be an Android \
+         package name such as `com.example.app`, not a path"
     )]
     InvalidAppIdentifier(String),
 

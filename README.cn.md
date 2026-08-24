@@ -6,7 +6,7 @@
 独立原生窗口中，不影响手机主屏。
 
 ```bash
-appcast run adb 10.0.0.8:5555 com.termux
+appcast run adb-scrcpy 10.0.0.8:5555 com.termux
 ```
 
 ## 工作原理
@@ -30,7 +30,7 @@ scrcpy -s <目标> \
 ## 环境要求
 
 - PATH 中有 `adb`
-- PATH 中有 `scrcpy` >= 3.0（推荐 4.x）
+- PATH 中有 `scrcpy` >= 3.0（推荐 4.x；启动时会检查并给出明确报错）
 - Android 设备已开启 USB/网络调试
 
 ## 安装
@@ -72,10 +72,10 @@ pkg update && pkg install appcast
 
 ```bash
 # 流转应用（无状态一行命令）
-appcast run adb <序列号|ip:端口> <包名>
+appcast run adb-scrcpy <序列号|ip:端口> <包名>
 
 # 通过透传使用任意 scrcpy 参数（原样追加）
-appcast run adb DUMMY com.termux --param resolution=1280x960 \
+appcast run adb-scrcpy DUMMY com.termux --param resolution=1280x960 \
     -- --no-vd-destroy-content -x --video-codec=h265
 
 # 只输出合并后的完整命令行，不执行
@@ -85,7 +85,7 @@ appcast snapshot --profile qq
 appcast list --target 10.0.0.8:5555
 
 # Profile：保存 / 列出 / 编辑（$EDITOR）/ 删除
-appcast profile save qq adb 序列号 com.tencent.mobileqq
+appcast profile save qq adb-scrcpy 序列号 com.tencent.mobileqq
 appcast profile edit qq
 appcast run --profile qq
 ```
@@ -100,6 +100,7 @@ appcast run --profile qq
 
 后端扩展参数（`--param`）：`resolution`、`fps`、`bit_rate`、`adb_path`、
 `scrcpy_path`。未识别的键会警告并忽略——它们是自定义 transporter 的扩展通道。
+`adb-scrcpy` 后端要求 **scrcpy >= 3.0**（启动时检查，报错信息明确）。
 
 > 不支持 `--activity`：应用由 scrcpy 自行启动（`--start-app` 以整包为单位）。
 
