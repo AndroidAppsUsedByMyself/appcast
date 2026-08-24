@@ -133,7 +133,11 @@ pub enum ProfileAction {
         app: Option<String>,
     },
     /// List saved profiles.
-    List,
+    List {
+        /// Emit full profiles as pretty JSON instead of bare names
+        #[arg(long)]
+        json: bool,
+    },
     /// Open the profile YAML in $EDITOR (creates a template if missing).
     Edit {
         /// Profile name
@@ -274,10 +278,36 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
             };            let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
         }
-        ProfileAction::List => {
-            for name in profile::list_profiles()? {
-                println!("{name}");
+        ProfileAction::List { json } => {
+            let names = profile::list_profiles()?;
+            if !json {
+                for name in &names {
+                    println!("{name}");
+                }
+                return Ok(());
             }
+            // JSON shape: [{ name, <flattened profile fields> }, ...]
+            #[derive(serde::Serialize)]
+            struct ProfileEntry<'a> {
+                name: &'a str,
+                #[serde(flatten)]
+                profile: &'a Profile,
+            }
+            let mut loaded = Vec::new();
+            for name in &names {
+                // One corrupt file must not take down the whole listing.
+                match profile::load_profile(name) {
+                    Ok(p) => loaded.push((name.clone(), p)),
+                    Err(e) => eprintln!("warning: skipping profile `{name}`: {e}"),
+                }
+            }
+            let entries: Vec<ProfileEntry> = loaded
+                .iter()
+                .map(|(name, profile)| ProfileEntry { name, profile })
+                .collect();
+            let rendered = serde_json::to_string_pretty(&entries)
+                .map_err(|e| AppError::BackendError(format!("serialize profiles: {e}")))?;
+            emit(&rendered)?;
         }
         ProfileAction::Edit { name } => profile::edit_profile(&name).await?,
         ProfileAction::Rm { name } => {
@@ -544,6 +574,25 @@ mod tests {
         let json = serde_json::to_string(&entries).unwrap();
         assert!(json.contains(r#""name":"名字 B""#));
         assert!(json.contains(r#""id":"bare.id""#));
+    }
+
+    #[test]
+    fn profile_list_json_shape_is_flattened() {
+        let p = sample_profile();
+        #[derive(serde::Serialize)]
+        struct ProfileEntry<'a> {
+            name: &'a str,
+            #[serde(flatten)]
+            profile: &'a Profile,
+        }
+        let json = serde_json::to_string(&ProfileEntry {
+            name: "qq",
+            profile: &p,
+        })
+        .unwrap();
+        assert!(json.contains(r#""name":"qq""#));
+        assert!(json.contains(r#""transporter":"ssh-x11""#));
+        assert!(json.contains(r#""raw_args":["--keep-active"]"#));
     }
 
     #[test]
