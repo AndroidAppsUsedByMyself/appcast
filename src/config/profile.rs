@@ -34,6 +34,10 @@ pub struct Profile {
     /// Free-form extension params, overridable key-by-key via `--param`.
     #[serde(default)]
     pub params: HashMap<String, String>,
+    /// Passthrough args appended verbatim to the backend command
+    /// (`-- ...`); CLI passthrough replaces this when non-empty.
+    #[serde(default)]
+    pub raw_args: Vec<String>,
 }
 
 pub fn default_resolution() -> String {
@@ -58,6 +62,7 @@ resolution: 1920x1080
 fps: 60
 bit_rate: 8                 # Mbps
 params: {}
+# raw_args: ["--video-codec=h265", "-x"]   # passthrough to the backend
 "#;
 
 /// `$XDG_CONFIG_HOME/appcast` root directory.
@@ -190,6 +195,7 @@ mod tests {
             fps: default_fps(),
             bit_rate: default_bitrate(),
             params: HashMap::from([("adb_path".to_string(), "/custom/adb".to_string())]),
+            raw_args: vec![],
         }
     }
 

@@ -86,13 +86,15 @@ appcast run --profile qq
 ```
 
 Config merge priority (highest wins):
-positional args > dedicated options > `--param` > profile fields > profile `params` > defaults.
+positional args > dedicated options > `--param` > profile fields > profile `params`/`raw_args` > defaults.
 
 Options: `--profile`, `--transporter`, `--target`, `--app`, `--resolution WxH`,
 `--fps`, `--bit-rate` (Mbps), `--log-level`, `--param KEY=VALUE` (repeatable),
-`--` passthrough.
+`--` passthrough (overrides profile `raw_args` when non-empty).
 
-Backend params (`--param`): `adb_path`, `scrcpy_path`.
+Backend params (`--param`): `adb_path`, `scrcpy_path`. Unknown keys are
+warned about and ignored — they are the extension surface for custom
+transporters.
 
 > `--activity` is intentionally unsupported: apps are started by scrcpy
 > itself (`--start-app` targets whole packages).

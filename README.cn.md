@@ -85,13 +85,14 @@ appcast run --profile qq
 ```
 
 配置合并优先级（高者胜）：
-位置参数 > 专用选项 > `--param` > Profile 标准字段 > Profile `params` > 内置默认。
+位置参数 > 专用选项 > `--param` > Profile 标准字段 > Profile `params`/`raw_args` > 内置默认。
 
 选项：`--profile`、`--transporter`、`--target`、`--app`、`--resolution 宽x高`、
 `--fps`、`--bit-rate`（Mbps）、`--log-level`、`--param KEY=VALUE`（可重复）、
-`--` 透传。
+`--` 透传（非空时覆盖 Profile 的 `raw_args`）。
 
-后端扩展参数（`--param`）：`adb_path`、`scrcpy_path`。
+后端扩展参数（`--param`）：`adb_path`、`scrcpy_path`。未识别的键会警告并忽略——
+它们是自定义 transporter 的扩展通道。
 
 > 不支持 `--activity`：应用由 scrcpy 自行启动（`--start-app` 以整包为单位）。
 

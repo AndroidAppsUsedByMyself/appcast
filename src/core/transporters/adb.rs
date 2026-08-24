@@ -25,7 +25,7 @@ use std::env::consts::EXE_SUFFIX;
 use std::process::Stdio;
 
 use tokio::process::{Child, Command};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::error::AppError;
 use crate::core::transporter::{resolution_parts, BoxFut, ResolvedConfig, Transporter};
@@ -33,7 +33,22 @@ use crate::core::transporter::{resolution_parts, BoxFut, ResolvedConfig, Transpo
 /// The adb + scrcpy virtual-display backend (the only implemented backend).
 pub struct AndroidAdbTransporter;
 
+/// Param keys this backend actually interprets; anything else triggers a
+/// warning (typos fail loudly, forks can extend the set in their own backend).
+const KNOWN_PARAMS: &[&str] = &["adb_path", "scrcpy_path"];
+
 impl AndroidAdbTransporter {
+    /// Collect param keys this backend does not interpret.
+    fn unknown_param_keys(
+        params: &std::collections::HashMap<String, String>,
+    ) -> Vec<&str> {
+        params
+            .keys()
+            .filter(|k| !KNOWN_PARAMS.contains(&k.as_str()))
+            .map(String::as_str)
+            .collect()
+    }
+
     /// Resolve the adb binary: `params["adb_path"]` wins, else plain `adb`
     /// from PATH. `EXE_SUFFIX` keeps this Windows-compatible (`adb.exe`).
     fn adb_bin(config: &ResolvedConfig) -> String {
@@ -170,6 +185,11 @@ impl Transporter for AndroidAdbTransporter {
             // Fail fast on obviously-wrong identifiers before any subprocess.
             Self::validate_package_name(&config.app)?;
 
+            // Surface likely typos in --param keys (they would be inert).
+            for key in Self::unknown_param_keys(&config.params) {
+                warn!(key, "unknown param for adb backend (known: adb_path, scrcpy_path); ignoring");
+            }
+
             // Activity targeting belongs to the removed `am start` pipeline.
             if let Some(activity) = &config.activity {
                 return Err(AppError::BackendError(format!(
@@ -271,6 +291,16 @@ mod tests {
         let args = AndroidAdbTransporter::scrcpy_args(&cfg).unwrap();
         assert_eq!(args.last().map(String::as_str), Some("8M"));
         assert!(!args.contains(&"--no-vd-destroy-content".to_string()));
+    }
+
+    #[test]
+    fn flags_unknown_params_only() {
+        let cfg = config(&[], &[("adb_path", "/x"), ("scrcpy_pathh", "typo")]);
+        assert_eq!(AndroidAdbTransporter::unknown_param_keys(&cfg.params), vec!["scrcpy_pathh"]);
+        assert!(AndroidAdbTransporter::unknown_param_keys(
+            &config(&[], &[("adb_path", "/x"), ("scrcpy_path", "/y")]).params
+        )
+        .is_empty());
     }
 
     #[test]

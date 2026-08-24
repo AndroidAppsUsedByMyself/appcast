@@ -95,7 +95,8 @@ pub struct RunArgs {
     #[arg(long, value_name = "NAME")]
     pub profile: Option<String>,
 
-    /// Raw args appended verbatim to the scrcpy command (`-- --video-codec=h265 -x`)
+    /// Raw args appended verbatim to the scrcpy command; overrides the
+    /// profile's `raw_args` when non-empty (`-- --video-codec=h265 -x`)
     #[arg(last = true, value_name = "RAW_ARGS")]
     pub raw_args: Vec<String>,
 }
@@ -216,6 +217,7 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
                 fps: profile::default_fps(),
                 bit_rate: profile::default_bitrate(),
                 params: HashMap::new(),
+                raw_args: Vec::new(),
             };
             let path = profile::save_profile(&name, &new_profile)?;
             println!("saved profile `{name}` → {}", path.display());
@@ -252,20 +254,30 @@ fn load_optional_profile(name: Option<&str>) -> Result<Option<Profile>, AppError
 fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConfig, AppError> {
     // Explode the profile into an Option-view so every field can participate
     // in its own `.or(...)` chain independently.
-    let (p_transporter, p_target, p_app, p_activity, p_resolution, p_fps, p_bitrate, mut params) =
-        match profile {
-            Some(p) => (
-                Some(p.transporter),
-                Some(p.target),
-                Some(p.app),
-                p.activity,
-                Some(p.resolution),
-                Some(p.fps),
-                Some(p.bit_rate),
-                p.params,
-            ),
-            None => (None, None, None, None, None, None, None, HashMap::new()),
-        };
+    let (
+        p_transporter,
+        p_target,
+        p_app,
+        p_activity,
+        p_resolution,
+        p_fps,
+        p_bitrate,
+        mut params,
+        p_raw_args,
+    ) = match profile {
+        Some(p) => (
+            Some(p.transporter),
+            Some(p.target),
+            Some(p.app),
+            p.activity,
+            Some(p.resolution),
+            Some(p.fps),
+            Some(p.bit_rate),
+            p.params,
+            p.raw_args,
+        ),
+        None => (None, None, None, None, None, None, None, HashMap::new(), Vec::new()),
+    };
 
     // ---- core trio: three-step or-chain, error when fully empty ----
     let transporter = args
@@ -308,6 +320,14 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
         params.insert(key.to_string(), value.to_string());
     }
 
+    // ---- raw passthrough: profile provides a base, but any CLI `--` args
+    //      replace it wholesale (same "explicit wins" rule as scalars) ----
+    let raw_args = if args.raw_args.is_empty() {
+        p_raw_args
+    } else {
+        args.raw_args.clone()
+    };
+
     Ok(ResolvedConfig {
         transporter,
         target,
@@ -320,7 +340,7 @@ fn merge_config(args: &RunArgs, profile: Option<Profile>) -> Result<ResolvedConf
             .or(p_bitrate)
             .unwrap_or_else(profile::default_bitrate),
         params,
-        raw_args: args.raw_args.clone(),
+        raw_args,
     })
 }
 
@@ -404,6 +424,7 @@ mod tests {
                 ("port".to_string(), "22".to_string()),
                 ("keep".to_string(), "yes".to_string()),
             ]),
+            raw_args: vec!["--keep-active".to_string()],
         }
     }
 
@@ -501,6 +522,20 @@ mod tests {
             merge_config(&args, None),
             Err(AppError::InvalidResolutionFormat(_))
         ));
+    }
+
+    #[test]
+    fn raw_args_profile_fallback_and_cli_override() {
+        // No CLI passthrough → profile's raw_args flow through.
+        let args = positional("adb", "d", "p");
+        let config = merge_config(&args, Some(sample_profile())).unwrap();
+        assert_eq!(config.raw_args, vec!["--keep-active"]);
+
+        // Non-empty CLI passthrough replaces the profile's wholesale.
+        let mut override_args = positional("adb", "d", "p");
+        override_args.raw_args = vec!["-x".into()];
+        let config = merge_config(&override_args, Some(sample_profile())).unwrap();
+        assert_eq!(config.raw_args, vec!["-x"]);
     }
 
     #[test]
