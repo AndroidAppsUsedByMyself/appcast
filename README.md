@@ -131,3 +131,10 @@ nix develop            # or use rustup toolchain
 cargo build && cargo test && cargo clippy --all-targets
 nix build              # verify packaging
 ```
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). appcast is an
+independent tool that merely *invokes* external programs at runtime;
+scrcpy (Genymobile) and adb (Android Open Source Project) remain under
+their own Apache-2.0 terms.

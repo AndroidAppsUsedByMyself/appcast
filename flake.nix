@@ -29,8 +29,7 @@
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             meta = with pkgs.lib; {
-              description = "Cast a remote/local app's screen into a native window (adb/scrcpy)";
-              longDescription = ''
+              description = "Cast a remote/local app's screen into a native window (adb/scrcpy)";              longDescription = ''
                 appcast "flows" the GUI of a single application on a local or
                 remote device into its own window on this desktop.
 
@@ -41,7 +40,8 @@
                   parameter bundles; every field can be overridden from the CLI.
                 - snapshot prints the fully merged command line without running.
               '';
-              homepage = "https://github.com/desktop-tools-which-may-be-useful/appcast";
+              homepage = "https://github.com/AndroidAppsUsedByMyself/appcast";
+              license = licenses.asl20;
               platforms = platforms.unix;
               mainProgram = "appcast";
             };

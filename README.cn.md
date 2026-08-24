@@ -127,3 +127,9 @@ nix develop            # 或使用 rustup 工具链
 cargo build && cargo test && cargo clippy --all-targets
 nix build              # 验证打包
 ```
+
+## 许可证
+
+Apache-2.0 —— 见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。appcast 是独立工具，
+运行时仅*调用*外部程序；scrcpy（Genymobile）与 adb（Android Open Source
+Project）仍遵循其自身的 Apache-2.0 条款。

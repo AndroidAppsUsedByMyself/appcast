@@ -1,0 +1,10 @@
+appcast
+Copyright 2026 the appcast authors
+
+This product is an independent command-line tool. It invokes external
+programs at runtime but neither bundles nor redistributes them:
+
+- scrcpy — https://github.com/Genymobile/scrcpy
+  Copyright Genymobile. Licensed under the Apache License, Version 2.0.
+- adb (Android Debug Bridge) — part of the Android Open Source Project.
+  Licensed under the Apache License, Version 2.0.
