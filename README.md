@@ -83,7 +83,7 @@ appcast run adb-scrcpy DUMMY com.termux --param resolution=1280x960 \
 appcast snapshot --profile qq
 
 # List packages on a device
-appcast list --target 10.0.0.8:5555
+appcast list adb-scrcpy --target 10.0.0.8:5555
 
 # Profiles: save / list / edit ($EDITOR) / rm
 appcast profile save qq adb-scrcpy SERIAL com.tencent.mobileqq
