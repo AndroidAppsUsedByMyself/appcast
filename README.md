@@ -159,6 +159,21 @@ Then `appcast run mine <target> <app>` works with zero CLI changes.
 The historical `am start` pipeline is preserved in git history if you want
 a starting point.
 
+Every built-in adapter is an individually toggleable cargo feature whose
+exclusive dependencies travel with it (`adapter-adb = ["dep:regex"]`,
+plus `adapter-browser`, `adapter-ssh`, `adapter-waypipe`). Dropping one
+removes its code *and* its deps, and it disappears from CLI validation
+and completions:
+
+```bash
+cargo build --no-default-features --features cli,adapter-browser  # slim web-only CLI
+cargo check --no-default-features --features cli                  # plugins only, no built-ins
+```
+
+For a future heavy in-tree adapter: declare the dependency `optional`,
+wire it as `adapter-<name> = ["dep:<crate>"]`, and gate the module behind
+the same feature — nothing else changes.
+
 **Out-of-tree (`.so`/`.dll` plugin, own dependency tree)** — right for
 backends that need heavy dependencies. Rust has no stable ABI, so plugins
 speak a narrow C ABI (JSON payloads, version handshake) generated entirely
@@ -193,7 +208,15 @@ nix build              # verify packaging
 | task | shell | loop |
 |---|---|---|
 | core / in-tree adapter | `nix develop` | edit `src/core/transporters/*.rs`, register in `mod.rs`, `cargo test` |
-| out-of-tree plugin | `nix develop .#plugin` (WebKitGTK stack included) | edit `plugins/<name>/src/lib.rs`, then `install-plugin` (build + copy to `~/.config/appcast/transporters/`), verify with `appcast transporters` |
+| plugin (bare base) | `nix develop .#plugin` | edit `plugins/<name>/src/lib.rs`, then `install-plugin <crate>` (build + copy to `~/.config/appcast/transporters/`), verify with `appcast transporters` |
+| webview plugin | `nix develop .#plugin-webview` (adds the WebKitGTK stack) | same loop |
+
+Each plugin gets its own shell because backends link against different
+native stacks; add one entry to `mkPluginShell` calls in `flake.nix` when
+introducing a new backend. Workspace-wide runs that include GUI-linked
+members must go through their shell (`nix develop .#plugin-webview -c
+cargo test --workspace`); the bare shell covers core + SDK via workspace
+`default-members`.
 
 Built plugin `.so` files carry Nix store rpaths to their WebKitGTK
 runtime, so they load anywhere — no `LD_LIBRARY_PATH` needed.

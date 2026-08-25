@@ -1,5 +1,9 @@
 [workspace]
 members = [".", "sdk/appcast-plugin", "plugins/webview"]
+# Bare-shell `cargo test` / `clippy` iterate on the core only: the webview
+# member needs the WebKitGTK stack (use `nix develop .#plugin -c` for
+# workspace-wide runs). resolver pinned for the whole workspace.
+default-members = [".", "sdk/appcast-plugin"]
 resolver = "2"
 
 [package]
@@ -9,8 +13,20 @@ edition = "2021"
 license = "Apache-2.0"
 
 [features]
-default = ["cli"]
+default = [
+  "cli",
+  "adapter-adb",
+  "adapter-browser",
+  "adapter-ssh",
+  "adapter-waypipe",
+]
 cli = []
+# Every built-in transporter is individually toggleable; each feature owns
+# this adapter's exclusive dependencies (shared core deps stay unconditional).
+adapter-adb = ["dep:regex"]
+adapter-browser = []
+adapter-ssh = []
+adapter-waypipe = []
 # Future frontends, kept out of the default build so `run` stays tiny and instant.
 tui = ["dep:ratatui", "dep:crossterm"]
 web = ["dep:axum"]
@@ -27,7 +43,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 anyhow = "1.0"
 thiserror = "1.0"
-regex = "1.10"
+regex = { version = "1.10", optional = true }
 libloading = "0.8"
 
 # Optional deps for future frontends (never compiled unless the feature is on).

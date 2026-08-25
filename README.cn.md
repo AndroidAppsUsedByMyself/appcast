@@ -136,6 +136,20 @@ registry.register("mine", || Box::new(mine::Mine));
 之后 `appcast run mine <目标> <应用>` 直接可用，CLI 层零改动。
 历史版本中的 `am start` 流水线保留在 git 历史里，可作为起点。
 
+每个内置适配器都是独立可开关的 cargo feature，独占依赖随特性走
+（`adapter-adb = ["dep:regex"]`，另有 `adapter-browser`、
+`adapter-ssh`、`adapter-waypipe`）。关掉即同时移除代码与依赖，
+并从 CLI 校验与补全中消失：
+
+```bash
+cargo build --no-default-features --features cli,adapter-browser  # 精简纯网页版
+cargo check --no-default-features --features cli                  # 仅插件机制，零内置
+```
+
+未来要写依赖较重的树内适配器：依赖声明为 `optional`，以
+`adapter-<名字> = ["dep:<crate>"]` 挂接，模块用同一 feature 门控——
+其余一切不变。
+
 ### 投网页应用
 
 两个适配器覆盖网页内容，仅窗口机制不同：
@@ -173,7 +187,14 @@ nix build              # 验证打包
 | 任务 | Shell | 循环 |
 |---|---|---|
 | 核心 / 树内适配器 | `nix develop` | 改 `src/core/transporters/*.rs`，在 `mod.rs` 注册，`cargo test` |
-| 树外插件 | `nix develop .#plugin`（自带 WebKitGTK 全家桶） | 改 `plugins/<名字>/src/lib.rs`，然后 `install-plugin`（构建并拷到 `~/.config/appcast/transporters/`），用 `appcast transporters` 验证 |
+| 插件（裸基础环境） | `nix develop .#plugin` | 改 `plugins/<名字>/src/lib.rs`，然后 `install-plugin <crate名>`（构建并拷到 `~/.config/appcast/transporters/`），用 `appcast transporters` 验证 |
+| webview 插件 | `nix develop .#plugin-webview`（追加 WebKitGTK 全家桶） | 同上 |
+
+不同插件链接的原生栈不同，因此每个插件有独立 shell 而非一个大而全
+环境；新增后端时在 `flake.nix` 里加一条 `mkPluginShell` 即可。涉及
+GUI 链接成员的 workspace 级命令须进对应 shell（如 `nix develop
+.#plugin-webview -c cargo test --workspace`）；裸 shell 经 workspace
+`default-members` 覆盖核心 + SDK。
 
 构建出的插件 `.so` 通过 Nix store rpath 直接链到 WebKitGTK 运行时，
 任何环境都能 dlopen，无需 `LD_LIBRARY_PATH`。

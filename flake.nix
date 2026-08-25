@@ -85,6 +85,44 @@
             platforms = platforms.linux;
           };
         };
+      # Plugin authoring shells. Different plugins need different native
+      # stacks, so each gets its own shell instead of one bloated common
+      # environment: `.#plugin` is the bare base, `.#plugin-<name>` adds
+      # what that backend links against. Adding a plugin = add a shell
+      # entry here plus a package builder above.
+      # edit → build → deploy loop as a real binary (shellHook functions
+      # don't survive into `nix develop -c`).
+      mkInstallPlugin =
+        pkgs:
+        pkgs.writeShellScriptBin "install-plugin" ''
+          set -e
+          [ $# -eq 1 ] || { echo "usage: install-plugin <crate-name>"; exit 2; }
+          cargo build --release -p "$1"
+          mkdir -p ~/.config/appcast/transporters
+          find target/release -maxdepth 1 -type f \
+            \( -name "lib$1.so" -o -name "lib$1.dylib" \) \
+            -exec cp -v {} ~/.config/appcast/transporters/ \;
+          echo "installed → ~/.config/appcast/transporters/"
+        '';
+
+      mkPluginShell =
+        pkgs: nativeLibs:
+        pkgs.mkShell {
+          buildInputs =
+            with pkgs;
+            [
+              cargo
+              rustc
+              clippy
+              pkg-config
+              (mkInstallPlugin pkgs)
+            ]
+            ++ lib.optionals stdenv.isLinux [
+              udev
+              alsa-lib
+            ]
+            ++ nativeLibs;
+        };
     in
     {
       packages = forAllSystems (
@@ -125,6 +163,7 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
+          # Core + in-tree adapter development: pure Rust toolchain.
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
               cargo
@@ -133,39 +172,20 @@
               rustfmt
             ];
           };
-          # For building the web-webview plugin (wry/tao need the WebKitGTK
-          # stack). Linux-only extras on top of the default shell, plus an
-          # install-plugin helper for the edit→build→deploy loop.
-          plugin = pkgs.mkShell {
-            buildInputs =
-              with pkgs;
-              [
-                cargo
-                rustc
-                clippy
-                pkg-config
-                dbus
-                glib
-                gtk3
-                libsoup_3
-                webkitgtk_4_1
-              ]
-              ++ lib.optionals stdenv.isLinux [
-                udev
-                alsa-lib
-              ];
-            shellHook = ''
-              install-plugin() {
-                set -e
-                cargo build --release -p appcast_tpt_webview
-                mkdir -p ~/.config/appcast/transporters
-                cp -f target/release/libappcast_tpt_webview.so \
-                  ~/.config/appcast/transporters/
-                echo "installed → ~/.config/appcast/transporters/"
-              }
-              echo "appcast plugin dev shell — iterate: cargo build -p appcast_tpt_webview && install-plugin"
-            '';
-          };
+          # Bare plugin base (no GUI stack): SDK-level iteration and any
+          # backend that shells out to external tools.
+          plugin = mkPluginShell pkgs [ ];
+          # wry/tao link against the WebKitGTK stack.
+          plugin-webview = mkPluginShell pkgs (
+            with pkgs;
+            lib.optionals stdenv.isLinux [
+              dbus
+              glib
+              gtk3
+              libsoup_3
+              webkitgtk_4_1
+            ]
+          );
         }
       );
     };
