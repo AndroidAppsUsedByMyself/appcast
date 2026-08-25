@@ -5,10 +5,12 @@ on:
     branches: [ main ]
     paths:
       - 'src/**'
+      - 'sdk/**'
+      - 'plugins/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/**'
-      - '.github/workflows/release-archives.yml'
+      - '.github/workflows/release-archives.yml' 
   workflow_dispatch:
     inputs:
       release:
@@ -32,7 +34,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Out-of-tree transporter plugins: built natively per platform so each
+  # .so/.dll links the distro/runtime stack its users actually have (the
+  # Linux artifacts link system WebKitGTK-4.1, NOT Nix store paths).
+  plugin-webview:
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            target: linux-x86_64
+          - runs-on: ubuntu-24.04-arm
+            target: linux-aarch64
+          - runs-on: windows-latest
+            target: windows-x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: plugin-webview-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Install WebKitGTK build deps (Linux)
+        if: startsWith(matrix.target, 'linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev             libdbus-1-dev pkg-config
+
+      - name: Build plugin
+        run: cargo build --release --locked -p appcast_tpt_webview
+
+      - name: Stage plugin artifact
+        shell: bash
+        run: |
+          mkdir -p stage
+          case "${{ matrix.target }}" in
+            linux-*)
+              cp target/release/libappcast_tpt_webview.so                  "stage/plugin-webview-${{ matrix.target }}.so" ;;
+            windows-*)
+              cp target/release/appcast_tpt_webview.dll                  "stage/plugin-webview-${{ matrix.target }}.dll" ;;
+          esac
+          f=$(ls stage/plugin-webview-*)
+          sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: plugin-webview-${{ matrix.target }}
+          path: stage/
+
   build:
+    needs: plugin-webview
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -148,6 +203,13 @@ jobs:
           echo "== DLL imports (must be Windows system DLLs only) =="
           objdump -p "pool/appcast-${VERSION}-x86_64.exe" | grep -E 'DLL Name|file format' || true
 
+      - name: Download plugin artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: plugin-webview-*
+          path: pool/plugins
+          merge-multiple: true
+
       - name: Resolve version and tag
         id: version
         run: |
@@ -177,6 +239,9 @@ jobs:
             cp "pool/debian/appcast_${VERSION}_${arch}.deb" "$STAGE/debian-${arch}.deb"
           done
           cp pool/*.exe "$STAGE/windows-x86_64.exe"
+          # transporter plugins ride along as regular release assets and
+          # join manifest.json via scan_stage automatically
+          cp pool/plugins/* "$STAGE"/
 
           OWNER="${REPO%%/*}"
           PROJECT="${REPO##*/}"
