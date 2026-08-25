@@ -328,6 +328,16 @@ fn cmd_transporters() -> anyhow::Result<()> {
     for (name, origin) in registry.entries() {
         println!("{name:<14} {origin}");
     }
+    // Make "why isn't my plugin loading" diagnosable from the command
+    // itself: show every dir that was scanned, in priority order.
+    let dirs = crate::core::plugins::search_dirs();
+    if !dirs.is_empty() {
+        println!();
+        println!("plugin dirs (later overrides earlier):");
+        for dir in &dirs {
+            println!("  {}", dir.display());
+        }
+    }
     Ok(())
 }
 

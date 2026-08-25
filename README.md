@@ -130,7 +130,7 @@ Two transporters cover web content, differing only in the window mechanism:
 
 | transporter | window | needs | params |
 |---|---|---|---|
-| `web-browser` (built-in) | system browser in app mode (`--app`) — no tabs, no address bar | any Chromium-family browser; Firefox via `kiosk=true` | `browser_path`, `window_size`, `kiosk` |
+| `web-browser` (built-in) | system browser in app mode (`--app`) — no tabs, no address bar | any Chromium-family browser; Firefox via `kiosk=true` | `browser_path`, `window_size`, `kiosk`, `profile` |
 | `web-webview` (plugin) | embedded WebView (WebKitGTK / WebView2 / WKWebView) in its own window | plugin installed (see below); Linux build needs WebKitGTK | `window_size`, `title` |
 
 ```bash
@@ -138,6 +138,15 @@ appcast run web-browser https://excalidraw.com --param window_size=1600x900
 appcast run web-webview https://excalidraw.com --param title=Draw
 appcast transporters   # list every backend and where it came from
 ```
+
+Chromium-family browsers are single-instance per profile: a plain launch
+while your browser is running just hands the URL over and exits. This
+backend therefore runs against a **dedicated profile** by default
+(`--user-data-dir` under the appcast data dir) plus `--new-window`, so the
+spawned process stays under Ctrl+C control and logins persist across
+casts without touching your daily browser. Set `--param profile=default`
+to share your real browser profile instead (subject to that handoff), or
+`--param profile=<path>` for a custom one.
 
 ## Extending
 
@@ -190,8 +199,11 @@ export_appcast_transporter!(Mine);
 ```
 
 Build as a cdylib named `libappcast_tpt_<name>.{so,dylib,dll}` and drop it
-into `~/.config/appcast/transporters/` (or point `$APPCAST_TRANSPORTER_DIR`
-at a PATH-style list of dirs). Plugins may override same-named built-ins;
+into the plugin dir — Linux: `~/.config/appcast/transporters/`; Windows:
+`%APPDATA%\appcast\transporters` (the literal `~/.config` path is scanned
+there too); macOS: `~/Library/Application Support/appcast/transporters`.
+Or point `$APPCAST_TRANSPORTER_DIR` at a PATH-style list of dirs.
+`appcast transporters` prints every dir it scanned. Plugins may override same-named built-ins;
 `appcast transporters` shows what loaded and from where. See
 [plugins/webview](plugins/webview) for a complete real-world plugin.
 

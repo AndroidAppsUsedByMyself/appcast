@@ -23,6 +23,18 @@
 //!   (Chromium only — Gecko kiosk is always fullscreen).
 //! - `kiosk`: `true`/`false` (default false); Chromium `--kiosk`,
 //!   mandatory for Gecko.
+//! - `profile`: browser profile isolation. Default = a dedicated
+//!   appcast-owned directory (persistent logins across casts, independent
+//!   of the daily browser). `default` = the browser's own profile
+//!   (shares cookies; subject to single-instance handoff, see below);
+//!   any other value = used verbatim as a custom profile path.
+//!
+//! Chromium-family browsers are single-instance per profile: a launch
+//! against an already-running profile hands the URL to that process and
+//! exits immediately. The dedicated default profile avoids stealing the
+//! user's running session AND keeps the spawned process under our
+//! lifecycle control; `--new-window` makes even a delegated relaunch open
+//! its own window instead of a tab.
 //!
 //! Everything else goes through raw args after `--`, appended verbatim.
 
@@ -46,7 +58,7 @@ pub struct WebBrowserTransporter;
 
 /// Param keys this backend actually interprets; anything else triggers a
 /// warning so typos fail loudly instead of staying inert.
-const KNOWN_PARAMS: &[&str] = &["browser_path", "window_size", "kiosk"];
+const KNOWN_PARAMS: &[&str] = &["browser_path", "window_size", "kiosk", "profile"];
 
 /// Browser engine families this backend knows how to drive. Detection is
 /// purely name-based; anything unrecognised is assumed Chromium-compatible
@@ -102,6 +114,22 @@ impl WebBrowserTransporter {
         }
     }
 
+    /// Dedicated persistent profile dir under the appcast data root:
+    /// `$XDG_DATA_HOME/appcast/web-browser-profile` on Linux,
+    /// `%APPDATA%\appcast\web-browser-profile` on Windows. Logins made in
+    /// a cast survive across runs without touching the daily browser.
+    fn default_profile() -> std::path::PathBuf {
+        use etcetera::app_strategy::{choose_app_strategy, AppStrategy, AppStrategyArgs};
+        let args = || AppStrategyArgs {
+            top_level_domain: "io.github".into(),
+            author: "AndroidAppsUsedByMyself".into(),
+            app_name: "appcast".into(),
+        };
+        choose_app_strategy(args())
+            .map(|s| s.data_dir().join("web-browser-profile"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("appcast-web-browser-profile"))
+    }
+
     /// Collect param keys this backend does not interpret.
     fn unknown_param_keys(params: &HashMap<String, String>) -> Vec<&str> {
         params
@@ -154,6 +182,14 @@ impl WebBrowserTransporter {
                 if kiosk {
                     args.push("--kiosk".to_string());
                 }
+                match config.param("profile") {
+                    Some("default") => {} // share the browser's own profile
+                    Some(custom) => args.push(format!("--user-data-dir={custom}")),
+                    None => args.push(format!("--user-data-dir={}", Self::default_profile().display())),
+                    // Even against a running instance this opens its own
+                    // window instead of delegating into a tab.
+                }
+                args.push("--new-window".to_string());
             }
             Family::Gecko => {
                 // A plain `firefox <url>` just opens another tab in a normal
@@ -170,6 +206,9 @@ impl WebBrowserTransporter {
                 }
                 args.push("-kiosk".to_string());
                 args.push(url.to_string());
+                // Refuse delegation to an already-running firefox: own
+                // process or nothing, so Ctrl+C semantics stay honest.
+                args.push("--new-instance".to_string());
             }
         }
         args.extend(config.raw_args.iter().cloned());
@@ -372,18 +411,42 @@ mod tests {
     }
 
     #[test]
-    fn chromium_minimal_plan_has_only_app_flag() {
+    fn chromium_minimal_plan_isolates_profile_and_new_window() {
         let args =
             WebBrowserTransporter::launch_plan("/usr/bin/chromium", "https://e.com", &config(&[], &[]))
                 .unwrap();
-        assert_eq!(args, vec!["--app=https://e.com"]);
+        assert_eq!(args[0], "--app=https://e.com");
+        let user_data = args
+            .iter()
+            .find(|a| a.starts_with("--user-data-dir="))
+            .expect("dedicated profile dir is injected by default");
+        assert!(user_data.contains("appcast"), "{user_data}");
+        assert!(args.contains(&"--new-window".to_string()));
+    }
+
+    #[test]
+    fn profile_param_switches_isolation_modes() {
+        // `default` = share the browser's own profile: no --user-data-dir.
+        let shared = config(&[], &[("profile", "default")]);
+        let args =
+            WebBrowserTransporter::launch_plan("/usr/bin/chromium", "https://e.com", &shared)
+                .unwrap();
+        assert!(!args.iter().any(|a| a.starts_with("--user-data-dir=")));
+        assert!(args.contains(&"--new-window".to_string()));
+
+        // Any other value = custom profile path, verbatim.
+        let custom = config(&[], &[("profile", "/tmp/cast-profile")]);
+        let args =
+            WebBrowserTransporter::launch_plan("/usr/bin/chromium", "https://e.com", &custom)
+                .unwrap();
+        assert!(args.contains(&"--user-data-dir=/tmp/cast-profile".to_string()));
     }
 
     #[test]
     fn chromium_full_plan_orders_flags_then_passthrough() {
         let cfg = config(
             &["--force-dark-mode"],
-            &[("window_size", "1280x800"), ("kiosk", "true")],
+            &[("profile", "default"), ("window_size", "1280x800"), ("kiosk", "true")],
         );
         let args = WebBrowserTransporter::launch_plan("chrome.exe", "https://e.com", &cfg).unwrap();
         assert_eq!(
@@ -392,6 +455,7 @@ mod tests {
                 "--app=https://e.com",
                 "--window-size=1280,800",
                 "--kiosk",
+                "--new-window",
                 "--force-dark-mode"
             ]
         );
@@ -408,11 +472,11 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("kiosk=true"), "{err}");
 
-        // With kiosk: -kiosk + url; window_size warned away, not passed.
+        // With kiosk: -kiosk + url + own-instance; window_size warned away.
         let cfg = config(&[], &[("kiosk", "true"), ("window_size", "1x1")]);
         let args =
             WebBrowserTransporter::launch_plan("firefox", "https://e.com", &cfg).unwrap();
-        assert_eq!(args, vec!["-kiosk", "https://e.com"]);
+        assert_eq!(args, vec!["-kiosk", "https://e.com", "--new-instance"]);
     }
 
     #[test]

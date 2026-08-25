@@ -25,9 +25,9 @@ INSTALL = {
         "curl -fL {url} -o ~/.config/appcast/transporters/{filename}"
     ),
     "windows": (
-        "mkdir \"$env:USERPROFILE\\.config\\appcast\\transporters\" -Force\n"
+        "mkdir \"$env:APPDATA\\appcast\\transporters\" -Force\n"
         "curl.exe -fL \"{url}\" "
-        "-o \"$env:USERPROFILE\\.config\\appcast\\transporters\\{filename}\""
+        "-o \"$env:APPDATA\\appcast\\transporters\\{filename}\""
     ),
 }
 
@@ -92,7 +92,8 @@ def main() -> None:
 <body><h1>appcast plugin: <code>{esc(crate)}</code> v{esc(version)}</h1>
 <p>Drop the artifact for your platform into
 <code>~/.config/appcast/transporters/</code> (Windows:
-<code>%USERPROFILE%\\.config\\appcast\\transporters</code>) &mdash; the
+<code>%APPDATA%\\appcast\\transporters</code> &mdash; the literal
+<code>~\\.config</code> path is scanned too) &mdash; the
 file names below already match what the loader scans, no renaming needed.
 Run <code>appcast transporters</code> afterwards to see it listed.</p>
 <table border="1" cellpadding="6">

@@ -54,14 +54,28 @@ pub(crate) fn search_dirs() -> Vec<PathBuf> {
 /// environment state.
 fn dirs_from(env_value: Option<std::ffi::OsString>) -> Vec<PathBuf> {
     if let Some(raw) = env_value {
-        std::env::split_paths(&raw).collect()
-    } else {
-        // Mirrors config::profile's namespace: <config>/appcast/transporters.
-        match choose_base_strategy().map(|s| s.config_dir().join("appcast").join("transporters")) {
-            Ok(dir) => vec![dir],
-            Err(_) => Vec::new(),
-        }
+        return std::env::split_paths(&raw).collect();
     }
+    // Two default roots, platform-convention first:
+    // - etcetera's config dir: ~/.config on Linux, %APPDATA% on Windows,
+    //   ~/Library/Application Support on macOS;
+    // - the literal ~/.config path, because cross-platform muscle memory
+    //   (and older docs) put plugins there regardless of OS.
+    // Later entries override earlier ones on name collisions.
+    let mut dirs = Vec::new();
+    if let Ok(strategy) = choose_base_strategy() {
+        dirs.push(strategy.config_dir().join("appcast").join("transporters"));
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        dirs.push(
+            PathBuf::from(home)
+                .join(".config")
+                .join("appcast")
+                .join("transporters"),
+        );
+    }
+    dirs.dedup();
+    dirs
 }
 
 /// Naming-convention filter: optional `lib` prefix (Linux/macOS artifacts)

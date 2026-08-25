@@ -156,7 +156,7 @@ cargo check --no-default-features --features cli                  # 仅插件机
 
 | 适配器 | 窗口 | 依赖 | 参数 |
 |---|---|---|---|
-| `web-browser`（内置） | 系统浏览器 App 模式（`--app`），无标签页无地址栏 | 任一 Chromium 系浏览器；Firefox 需 `kiosk=true` | `browser_path`、`window_size`、`kiosk` |
+| `web-browser`（内置） | 系统浏览器 App 模式（`--app`），无标签页无地址栏 | 任一 Chromium 系浏览器；Firefox 需 `kiosk=true` | `browser_path`、`window_size`、`kiosk`、`profile` |
 | `web-webview`(插件) | 自有窗口内嵌 WebView（WebKitGTK / WebView2 / WKWebView） | 安装插件（见下）；Linux 构建需 WebKitGTK | `window_size`、`title` |
 
 ```bash
@@ -165,13 +165,22 @@ appcast run web-webview https://excalidraw.com --param title=Draw
 appcast transporters   # 列出所有后端及其来源
 ```
 
+Chromium 系浏览器按 profile 单实例：你的浏览器正在运行时，直接启动只会把
+URL 移交过去然后立刻退出。因此本后端默认使用**专属 profile**（appcast
+数据目录下的 `--user-data-dir`）加 `--new-window`——被拉起的进程归 Ctrl+C
+管，登录态跨次持久，且不碰日常浏览器。`--param profile=default` 改为共享
+真实浏览器配置（受上述移交行为影响）；`--param profile=<路径>` 用自定义。
+
 **树外插件（`.so`/`.dll`，独立依赖树）**——适合需要重依赖的后端。Rust
 没有稳定 ABI，因此插件走一条窄 C ABI（JSON 载荷 + 版本握手），全部 FFI
 由 [sdk/appcast-plugin](sdk/appcast-plugin) SDK 生成：你只需实现一个阻塞
 trait，零 `unsafe`。以 cdylib 形式构建为
-`libappcast_tpt_<名字>.{so,dylib,dll}`，放进
-`~/.config/appcast/transporters/`（或用 `$APPCAST_TRANSPORTER_DIR` 指向
-PATH 式目录列表）。同名插件可覆盖内置后端；`appcast transporters` 可查
+`libappcast_tpt_<名字>.{so,dylib,dll}`，放进插件目录——Linux:
+`~/.config/appcast/transporters/`；Windows:
+`%APPDATA%\appcast\transporters`（字面 `~/.config` 路径同样会被扫描）；
+macOS: `~/Library/Application Support/appcast/transporters`。或用
+`$APPCAST_TRANSPORTER_DIR` 指向 PATH 式目录列表。`appcast transporters`
+会打印实际扫描过的所有目录。同名插件可覆盖内置后端；`appcast transporters` 可查
 加载结果与来源。完整实例见 [plugins/webview](plugins/webview)。
 
 ## 开发
