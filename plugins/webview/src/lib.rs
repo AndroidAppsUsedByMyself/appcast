@@ -24,7 +24,12 @@ use std::collections::HashMap;
 use appcast_plugin::{
     export_appcast_transporter, ConfigSnapshot, ListedApp, SimpleTransporter,
 };
+// run_return returns control instead of tao's run(), which ends with
+// process::exit and skips ordered teardown of the webview/window.
+use tao::platform::run_return::EventLoopExtRunReturn;
+
 use tao::dpi::LogicalSize;
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
 
@@ -91,7 +96,7 @@ impl WebViewTransporter {
     /// Build the window + webview pair and pump events until the user
     /// closes the window.
     fn session(url: &str, title: &str, size: (f64, f64)) -> Result<(), String> {
-        let event_loop = event_loop();
+        let mut event_loop = event_loop();
         #[cfg(target_os = "linux")]
         use tao::platform::unix::{WindowBuilderExtUnix, WindowExtUnix};
         let window = WindowBuilder::new()
@@ -126,11 +131,49 @@ impl WebViewTransporter {
             }
         };
 
-        // Block on the platform event loop; when the window closes tao
-        // breaks out with Exit and run() returns, ending the session.
-        event_loop.run(move |_, _, control_flow| {
+        // CloseRequested MUST be handled explicitly: the default Wait
+        // policy ignores it and leaves a zombie session behind. Set
+        // APPCAST_WEBVIEW_DEBUG=1 for per-event tracing.
+        let debug_events = std::env::var_os("APPCAST_WEBVIEW_DEBUG").is_some();
+        let exit_code = event_loop.run_return(move |event, _, control_flow| {
             *control_flow = ControlFlow::Wait;
-        })
+            match &event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    if debug_events {
+                        eprintln!("web-webview: CloseRequested -> exiting");
+                    }
+                    *control_flow = ControlFlow::Exit;
+                }
+                other => {
+                    if debug_events {
+                        match other {
+                            Event::MainEventsCleared => {}
+                            Event::WindowEvent { event, .. } => {
+                                eprintln!("web-webview: win-ev {event:?}")
+                            }
+                            ev => eprintln!("web-webview: ev {ev:?}"),
+                        }
+                    }
+                }
+            }
+        });
+
+        // Ordered teardown after the loop stops: webview first, then the
+        // window, all while we can still return normally to the host.
+        drop(_webview);
+        drop(window);
+        if debug_events {
+            eprintln!("web-webview: loop exited with code {exit_code}");
+        }
+
+        if exit_code == 0 {
+            Ok(())
+        } else {
+            Err(format!("display connection lost (code {exit_code})"))
+        }
     }
 }
 
