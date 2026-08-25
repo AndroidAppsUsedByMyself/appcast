@@ -188,6 +188,35 @@ cargo build && cargo test && cargo clippy --all-targets
 nix build              # verify packaging
 ```
 
+### NixOS workflows
+
+| task | shell | loop |
+|---|---|---|
+| core / in-tree adapter | `nix develop` | edit `src/core/transporters/*.rs`, register in `mod.rs`, `cargo test` |
+| out-of-tree plugin | `nix develop .#plugin` (WebKitGTK stack included) | edit `plugins/<name>/src/lib.rs`, then `install-plugin` (build + copy to `~/.config/appcast/transporters/`), verify with `appcast transporters` |
+
+Built plugin `.so` files carry Nix store rpaths to their WebKitGTK
+runtime, so they load anywhere — no `LD_LIBRARY_PATH` needed.
+
+Declarative system-wide install:
+
+```nix
+# flake.nix
+inputs.appcast.url = "github:AndroidAppsUsedByMyself/appcast";
+
+# configuration.nix
+imports = [ inputs.appcast.nixosModules.default ];
+nixpkgs.overlays = [ inputs.appcast.overlays.default ];
+programs.appcast = {
+  enable = true;
+  plugins = [ pkgs.appcast-tpt-webview ];  # or programs.appcast.package = pkgs.appcast;
+};
+```
+
+The module wraps `appcast` so the declarative plugin store is searched
+after any per-user `$APPCAST_TRANSPORTER_DIR` — users can still shadow a
+system plugin by dropping a same-named one into their own directory.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). appcast is an

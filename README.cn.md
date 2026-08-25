@@ -168,6 +168,35 @@ cargo build && cargo test && cargo clippy --all-targets
 nix build              # 验证打包
 ```
 
+### NixOS 工作流
+
+| 任务 | Shell | 循环 |
+|---|---|---|
+| 核心 / 树内适配器 | `nix develop` | 改 `src/core/transporters/*.rs`，在 `mod.rs` 注册，`cargo test` |
+| 树外插件 | `nix develop .#plugin`（自带 WebKitGTK 全家桶） | 改 `plugins/<名字>/src/lib.rs`，然后 `install-plugin`（构建并拷到 `~/.config/appcast/transporters/`），用 `appcast transporters` 验证 |
+
+构建出的插件 `.so` 通过 Nix store rpath 直接链到 WebKitGTK 运行时，
+任何环境都能 dlopen，无需 `LD_LIBRARY_PATH`。
+
+声明式系统级安装：
+
+```nix
+# flake.nix
+inputs.appcast.url = "github:AndroidAppsUsedByMyself/appcast";
+
+# configuration.nix
+imports = [ inputs.appcast.nixosModules.default ];
+nixpkgs.overlays = [ inputs.appcast.overlays.default ];
+programs.appcast = {
+  enable = true;
+  plugins = [ pkgs.appcast-tpt-webview ];  # 或 programs.appcast.package = pkgs.appcast;
+};
+```
+
+模块会对 `appcast` 做一层 wrapper：声明式插件目录在用户级
+`$APPCAST_TRANSPORTER_DIR` 之后搜索——用户仍可在自己的目录放同名插件
+覆盖系统版本。
+
 ## 许可证
 
 Apache-2.0 —— 见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。appcast 是独立工具，
