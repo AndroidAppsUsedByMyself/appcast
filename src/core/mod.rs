@@ -5,6 +5,7 @@
 //! [`Transporter`](transporter::Transporter) through the registry.
 
 pub mod error;
+pub mod plugins;
 pub mod registry;
 pub mod transporter;
 pub mod transporters;

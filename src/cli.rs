@@ -32,7 +32,7 @@ impl TypedValueParser for TransporterValueParser {
     ) -> Result<Self::Value, clap::Error> {
         let value = value.to_string_lossy().into_owned();
 
-        let registry = transporters::default_registry();
+        let registry = transporters::build_registry();
         let names = registry.names();
         if names.iter().any(|name| *name == value) {
             return Ok(value);
@@ -118,6 +118,8 @@ pub enum Command {
     List(ListArgs),
     /// Print the fully merged command line without executing anything.
     Snapshot(RunArgs),
+    /// List installed transporters (built-in backends and plugins).
+    Transporters,
 }
 
 /// Shared argument surface of `run` and `snapshot`.
@@ -202,6 +204,11 @@ pub struct ListArgs {
 }
 
 /// Subcommands of `appcast profile`.
+///
+/// Save carries the full run-like argument surface inline by design: the
+/// enum is built once per invocation and destructured immediately, so the
+/// size imbalance costs nothing — boxing would only obscure the fields.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum ProfileAction {
     /// Save arguments as a profile (overwrites an existing one).
@@ -302,6 +309,7 @@ pub async fn run_cli() -> anyhow::Result<()> {
         Command::Snapshot(args) => cmd_snapshot(args).await,
         Command::List(args) => cmd_list(args).await,
         Command::Profile { action } => cmd_profile(action).await,
+        Command::Transporters => cmd_transporters(),
     }
 }
 
@@ -309,9 +317,17 @@ async fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
     let profile = load_optional_profile(args.profile.as_deref())?;
     let config = merge_config(&args, profile)?;
 
-    let transporter = transporters::default_registry().get(&config.transporter)?;
+    let transporter = transporters::build_registry().get(&config.transporter)?;
     debug!(transporter = transporter.name(), "dispatching to backend");
     transporter.run(&config).await?;
+    Ok(())
+}
+
+fn cmd_transporters() -> anyhow::Result<()> {
+    let registry = transporters::build_registry();
+    for (name, origin) in registry.entries() {
+        println!("{name:<14} {origin}");
+    }
     Ok(())
 }
 
@@ -343,7 +359,7 @@ async fn cmd_list(args: ListArgs) -> anyhow::Result<()> {
         .ok_or(AppError::Usage(USAGE.into()))?;
     let params = profile.map(|p| p.params).unwrap_or_default();
 
-    let transporter = transporters::default_registry().get(&transporter_name)?;
+    let transporter = transporters::build_registry().get(&transporter_name)?;
     let entries = transporter.list_apps(&target, &params).await?;
 
     // Rendering is CLI-local; the data itself is the reusable core API
@@ -437,7 +453,7 @@ async fn cmd_profile(action: ProfileAction) -> anyhow::Result<()> {
 
             // Defense-in-depth: base profiles may carry a stale name that
             // never passed the clap parser.
-            transporters::default_registry()
+            transporters::build_registry()
                 .get(&resolved.transporter)
                 .map(|_| ())?;
 

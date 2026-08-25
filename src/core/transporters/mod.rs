@@ -22,3 +22,13 @@ pub fn default_registry() -> TransporterRegistry {
     registry.register("waypipe", || Box::new(waypipe::WaylandTransporter));
     registry
 }
+
+/// The registry the CLI actually uses: built-ins first, then plugins from
+/// the configured search dirs (which may override same-named built-ins).
+/// Every call site funnels through here so plugin discovery happens exactly
+/// once per invocation.
+pub fn build_registry() -> TransporterRegistry {
+    let mut registry = default_registry();
+    crate::core::plugins::load_into(&mut registry);
+    registry
+}

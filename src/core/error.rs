@@ -25,7 +25,7 @@ pub enum AppError {
     #[error("cannot determine scrcpy version: {0}")]
     ScrcpyVersionUnknown(String),
 
-    #[error("unknown transporter `{name}` (built-in: {available})")]
+    #[error("unknown transporter `{name}` (installed: {available})")]
     UnknownTransporter {
         name: String,
         available: String,

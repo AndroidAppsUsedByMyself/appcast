@@ -22,7 +22,7 @@ pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// all. Each backend validates the slots it requires and owns its usage
 /// message; everything backend-specific beyond the slots travels inside
 /// `params` (with backend-owned defaults).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ResolvedConfig {
     /// Protocol name, e.g. `"adb"`.
     pub transporter: String,
@@ -52,7 +52,10 @@ impl ResolvedConfig {
 /// (CLI today, TUI/WebUI later) consumes these values and renders them its
 /// own way. `Serialize` lets the CLI expose `--json` today and lets a WebUI
 /// return them as JSON verbatim tomorrow.
-#[derive(Debug, Clone, serde::Serialize)]
+///
+/// `Deserialize` completes the round trip across plugin boundaries: dynamic
+/// transporters hand listings back as JSON, which the host rehydrates here.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppEntry {
     /// Canonical identifier to feed back into the `app` slot of `run`
     /// (Android package name, executable path, ...).

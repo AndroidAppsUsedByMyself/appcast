@@ -466,7 +466,7 @@ mod tests {
             &["--no-vd-destroy-content", "--video-codec=h265", "-x"],
             &[],
         );
-        let mut args = vec![
+        let args = vec![
                 "-s",
                 "10.0.0.8:5555",
                 "--new-display",
