@@ -136,6 +136,30 @@ registry.register("mine", || Box::new(mine::Mine));
 之后 `appcast run mine <目标> <应用>` 直接可用，CLI 层零改动。
 历史版本中的 `am start` 流水线保留在 git 历史里，可作为起点。
 
+### 投网页应用
+
+两个适配器覆盖网页内容，仅窗口机制不同：
+
+| 适配器 | 窗口 | 依赖 | 参数 |
+|---|---|---|---|
+| `web-browser`（内置） | 系统浏览器 App 模式（`--app`），无标签页无地址栏 | 任一 Chromium 系浏览器；Firefox 需 `kiosk=true` | `browser_path`、`window_size`、`kiosk` |
+| `web-webview`(插件) | 自有窗口内嵌 WebView（WebKitGTK / WebView2 / WKWebView） | 安装插件（见下）；Linux 构建需 WebKitGTK | `window_size`、`title` |
+
+```bash
+appcast run web-browser https://excalidraw.com --param window_size=1600x900
+appcast run web-webview https://excalidraw.com --param title=Draw
+appcast transporters   # 列出所有后端及其来源
+```
+
+**树外插件（`.so`/`.dll`，独立依赖树）**——适合需要重依赖的后端。Rust
+没有稳定 ABI，因此插件走一条窄 C ABI（JSON 载荷 + 版本握手），全部 FFI
+由 [sdk/appcast-plugin](sdk/appcast-plugin) SDK 生成：你只需实现一个阻塞
+trait，零 `unsafe`。以 cdylib 形式构建为
+`libappcast_tpt_<名字>.{so,dylib,dll}`，放进
+`~/.config/appcast/transporters/`（或用 `$APPCAST_TRANSPORTER_DIR` 指向
+PATH 式目录列表）。同名插件可覆盖内置后端；`appcast transporters` 可查
+加载结果与来源。完整实例见 [plugins/webview](plugins/webview)。
+
 ## 开发
 
 ```bash

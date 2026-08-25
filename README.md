@@ -124,10 +124,27 @@ appcast run adb-scrcpy SERIAL com.tencent.mobileqq -- --keyboard=uhid
 > `--activity` is intentionally unsupported: apps are started by scrcpy
 > itself (`--start-app` targets whole packages).
 
+### Casting web apps
+
+Two transporters cover web content, differing only in the window mechanism:
+
+| transporter | window | needs | params |
+|---|---|---|---|
+| `web-browser` (built-in) | system browser in app mode (`--app`) — no tabs, no address bar | any Chromium-family browser; Firefox via `kiosk=true` | `browser_path`, `window_size`, `kiosk` |
+| `web-webview` (plugin) | embedded WebView (WebKitGTK / WebView2 / WKWebView) in its own window | plugin installed (see below); Linux build needs WebKitGTK | `window_size`, `title` |
+
+```bash
+appcast run web-browser https://excalidraw.com --param window_size=1600x900
+appcast run web-webview https://excalidraw.com --param title=Draw
+appcast transporters   # list every backend and where it came from
+```
+
 ## Extending
 
-Backends are pluggable behind the `Transporter` trait. To add your own
-(e.g. an `am start --display` variant that needs `--activity`):
+Backends plug in behind the `Transporter` trait, two ways:
+
+**In-tree (Rust, compiled into the binary)** — right for backends that
+shell out to external tools like adb-scrcpy does:
 
 ```rust
 // src/core/transporters/mine.rs
@@ -141,6 +158,27 @@ registry.register("mine", || Box::new(mine::Mine));
 Then `appcast run mine <target> <app>` works with zero CLI changes.
 The historical `am start` pipeline is preserved in git history if you want
 a starting point.
+
+**Out-of-tree (`.so`/`.dll` plugin, own dependency tree)** — right for
+backends that need heavy dependencies. Rust has no stable ABI, so plugins
+speak a narrow C ABI (JSON payloads, version handshake) generated entirely
+by the [`sdk/appcast-plugin`](sdk/appcast-plugin) SDK — you implement one
+blocking trait, zero `unsafe`:
+
+```rust
+use appcast_plugin::{export_appcast_transporter, SimpleTransporter};
+
+struct Mine;
+impl SimpleTransporter for Mine { /* name / run / list_apps */ }
+
+export_appcast_transporter!(Mine);
+```
+
+Build as a cdylib named `libappcast_tpt_<name>.{so,dylib,dll}` and drop it
+into `~/.config/appcast/transporters/` (or point `$APPCAST_TRANSPORTER_DIR`
+at a PATH-style list of dirs). Plugins may override same-named built-ins;
+`appcast transporters` shows what loaded and from where. See
+[plugins/webview](plugins/webview) for a complete real-world plugin.
 
 ## Development
 
