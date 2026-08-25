@@ -52,8 +52,8 @@ def version_from_tag(tag: str) -> str:
 def scan_stage(stage: str, repo: str, tag: str) -> dict:
     assets = {}
     for f in sorted(os.listdir(stage)):
-        if f.startswith("."):
-            continue
+        if f.startswith(".") or f.endswith(".sha256"):
+            continue  # sidecars remain release assets, not manifest entries
         label, _ext = os.path.splitext(f)
         rel = os.path.join(stage, f)
         assets[label] = {

@@ -71,14 +71,17 @@ jobs:
       - name: Stage plugin artifact
         shell: bash
         run: |
+          # Names MUST match the loader's libappcast_tpt_* convention so a
+          # plain download into ~/.config/appcast/transporters/ works with
+          # zero renaming.
           mkdir -p stage
           case "${{ matrix.target }}" in
             linux-*)
-              cp target/release/libappcast_tpt_webview.so                  "stage/plugin-webview-${{ matrix.target }}.so" ;;
+              cp target/release/libappcast_tpt_webview.so                  "stage/libappcast_tpt_webview-${{ matrix.target }}.so" ;;
             windows-*)
-              cp target/release/appcast_tpt_webview.dll                  "stage/plugin-webview-${{ matrix.target }}.dll" ;;
+              cp target/release/appcast_tpt_webview.dll                  "stage/libappcast_tpt_webview-${{ matrix.target }}.dll" ;;
           esac
-          f=$(ls stage/plugin-webview-*)
+          f=$(ls stage/libappcast_tpt_webview-*)
           sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"
 
       - uses: actions/upload-artifact@v5
@@ -251,7 +254,8 @@ jobs:
           - ${PAGES}/manifest.json — manifest of the build just published
           - ${PAGES}/latest.json — alias of manifest.json (latest build)
           - ${PAGES}/unstable.json — alias of manifest.json (unstable build)
-          - ${PAGES}/releases.json — formal releases, newest first"
+          - ${PAGES}/releases.json — formal releases, newest first
+          - ${PAGES}/plugins/ — transporter plugins and install commands"
 
           if [ "$MAKE_RELEASE" = "true" ]; then
             TAG="v${VERSION}"
@@ -302,6 +306,10 @@ jobs:
           python3 scripts/termux/mkrelease.py index \
             --repo "$REPO" --releases pages/gh-releases.json --out pages
           rm -f pages/gh-releases.json
+
+      - name: Generate plugin hosting pages
+        run: |
+          python3 scripts/termux/mkplugins.py             --manifest pages/manifest.json --out pages/plugins
 
       - name: Generate apt repository metadata
         env:
