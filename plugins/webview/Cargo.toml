@@ -1,0 +1,14 @@
+[package]
+name = "appcast_tpt_webview"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "appcast transporter plugin: embedded WebView window via wry"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+appcast-plugin = { path = "../../sdk/appcast-plugin" }
+tao = "0.37"
+wry = "0.56"

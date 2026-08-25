@@ -70,6 +70,27 @@
               rustfmt
             ];
           };
+          # For building the web-webview plugin (wry/tao need the WebKitGTK
+          # stack). Linux-only extras on top of the default shell.
+          plugin = pkgs.mkShell {
+            buildInputs =
+              with pkgs;
+              [
+                cargo
+                rustc
+                clippy
+                pkg-config
+                dbus
+                glib
+                gtk3
+                libsoup_3
+                webkitgtk_4_1
+              ]
+              ++ lib.optionals stdenv.isLinux [
+                udev
+                alsa-lib
+              ];
+          };
         }
       );
     };

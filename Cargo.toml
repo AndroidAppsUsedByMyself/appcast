@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "sdk/appcast-plugin"]
+members = [".", "sdk/appcast-plugin", "plugins/webview"]
 resolver = "2"
 
 [package]
