@@ -225,6 +225,9 @@ impl Transporter for DynamicTransporter {
                     AppError::BackendError(format!("plugin `{plugin}`: worker failed: {e}"))
                 })?;
             if code == 0 {
+                // Session-finished parity with built-in backends: their
+                // run() logs this internally, plugins don't.
+                info!(plugin = %plugin, "session finished");
                 Ok(())
             } else {
                 Err(AppError::BackendError(format!(

@@ -161,13 +161,17 @@ impl WebViewTransporter {
             }
         });
 
-        // Ordered teardown after the loop stops: webview first, then the
-        // window, all while we can still return normally to the host.
-        drop(_webview);
-        drop(window);
+        // Teardown policy: deliberately NOT dropping the webview/window
+        // here. Widget disposal after the loop stopped needs main-context
+        // iterations we no longer pump, and has been observed to deadlock
+        // the session thread (notably on Wayland) — the host then hangs
+        // after "window closed". Leaking is safe-by-design for a CLI: the
+        // OS reclaims everything when appcast exits.
         if debug_events {
-            eprintln!("web-webview: loop exited with code {exit_code}");
+            eprintln!("web-webview: loop exited with code {exit_code}; leaking gui handles");
         }
+        std::mem::forget(_webview);
+        std::mem::forget(window);
 
         if exit_code == 0 {
             Ok(())
