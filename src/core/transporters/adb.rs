@@ -47,6 +47,8 @@ use tracing::{debug, info, warn};
 
 use crate::core::error::AppError;
 use crate::core::transporter::{AppEntry, BoxFut, ResolvedConfig, Transporter};
+use crate::core::transporters::session;
+use crate::utils::parse::parse_wxh;
 
 /// The adb + scrcpy virtual-display backend (the only implemented backend).
 pub struct AdbScrcpyTransporter;
@@ -270,26 +272,6 @@ impl AdbScrcpyTransporter {
             .map_err(|e| AppError::ScrcpySpawnFailed(format!("{bin}: {e}")))
     }
 
-    /// Block until scrcpy exits naturally or the user hits Ctrl+C.
-    async fn wait_for_exit(child: &mut Child) -> String {
-        tokio::select! {
-            status = child.wait() => match status {
-                Ok(status) => format!("scrcpy exited ({status})"),
-                Err(e) => format!("scrcpy crashed: {e}"),
-            },
-            _ = tokio::signal::ctrl_c() => "interrupted by Ctrl+C".to_string(),
-        }
-    }
-
-    /// Mandatory teardown regardless of exit path: kill any lingering
-    /// scrcpy process and reap it (the virtual display dies with it).
-    async fn reap_child(child: &mut Child) {
-        if child.id().is_some() {
-            debug!("killing lingering scrcpy process");
-            let _ = child.kill().await;
-        }
-        let _ = child.wait().await; // reap, ignore errors
-    }
 }
 
 impl Transporter for AdbScrcpyTransporter {
@@ -329,8 +311,8 @@ impl Transporter for AdbScrcpyTransporter {
             let mut child = self.spawn_scrcpy(target, app, config).await?;
             info!(target = %target, app = %app, "scrcpy virtual display started; press Ctrl+C to stop");
 
-            let exit_reason = Self::wait_for_exit(&mut child).await;
-            Self::reap_child(&mut child).await;
+            let exit_reason = session::wait_or_ctrl_c(&mut child).await;
+            session::reap(&mut child).await;
 
             info!(reason = %exit_reason, "session finished");
             Ok(())
@@ -430,17 +412,6 @@ fn parse_scrcpy_app_list(output: &str) -> Vec<AppEntry> {
         .collect()
 }
 
-/// Parse a `"WxH"` string into its `(width, height)` components.
-///
-/// # Errors
-/// [`AppError::InvalidResolutionFormat`] when the input is not `<u32>x<u32>`.
-fn parse_wxh(value: &str) -> Result<(u32, u32), AppError> {
-    let invalid = || AppError::InvalidResolutionFormat(value.to_string());
-    let (w, h) = value.split_once('x').ok_or_else(invalid)?;
-    let w: u32 = w.trim().parse().map_err(|_| invalid())?;
-    let h: u32 = h.trim().parse().map_err(|_| invalid())?;
-    Ok((w, h))
-}
 
 #[cfg(test)]
 mod tests {

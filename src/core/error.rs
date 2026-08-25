@@ -43,6 +43,21 @@ pub enum AppError {
     #[error("failed to spawn scrcpy: {0} (is scrcpy installed and on PATH?)")]
     ScrcpySpawnFailed(String),
 
+    #[error(
+        "invalid URL `{0}`: the web-browser backend expects an http(s) URL \
+         such as `https://example.com`"
+    )]
+    InvalidUrl(String),
+
+    #[error(
+        "no supported browser found (tried: {tried}); \
+         install one, or point at yours via --param browser_path=<path>"
+    )]
+    NoBrowserFound { tried: String },
+
+    #[error("failed to launch browser `{0}` (is browser_path correct?)")]
+    BrowserLaunchFailed(String),
+
     #[error("profile `{0}` not found under ~/.config/appcast/profiles/")]
     ProfileNotFound(String),
 
