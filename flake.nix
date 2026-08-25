@@ -26,7 +26,7 @@
         pkgs:
         pkgs.rustPlatform.buildRustPackage {
           pname = "appcast";
-          version = "0.2.0";
+          version = "0.2.1";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           meta = with pkgs.lib; {
