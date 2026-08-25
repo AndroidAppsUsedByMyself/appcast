@@ -98,13 +98,20 @@ impl WebViewTransporter {
     fn session(url: &str, title: &str, size: (f64, f64)) -> Result<(), String> {
         let mut event_loop = event_loop();
         #[cfg(target_os = "linux")]
-        use tao::platform::unix::{WindowBuilderExtUnix, WindowExtUnix};
-        let window = WindowBuilder::new()
-            .with_default_vbox(true)
+        use tao::platform::unix::WindowExtUnix;
+        // Reserve the box the webview packs into (unix-only API).
+        #[cfg(target_os = "linux")]
+        let builder = {
+            use tao::platform::unix::WindowBuilderExtUnix;
+            WindowBuilder::new().with_default_vbox(true)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let builder = WindowBuilder::new();
+        let window = builder
             .with_title(title.to_string())
-        .with_inner_size(LogicalSize::new(size.0, size.1))
-        .build(&event_loop)
-        .map_err(|e| format!("window: {e}"))?;
+            .with_inner_size(LogicalSize::new(size.0, size.1))
+            .build(&event_loop)
+            .map_err(|e| format!("window: {e}"))?;
 
         // Linux: attach into tao's own vbox — packing the webview straight
         // into the top-level window collides with tao's internal layout and
