@@ -92,24 +92,29 @@ impl WebViewTransporter {
     /// closes the window.
     fn session(url: &str, title: &str, size: (f64, f64)) -> Result<(), String> {
         let event_loop = event_loop();
+        #[cfg(target_os = "linux")]
+        use tao::platform::unix::{WindowBuilderExtUnix, WindowExtUnix};
         let window = WindowBuilder::new()
+            .with_default_vbox(true)
             .with_title(title.to_string())
-            .with_inner_size(LogicalSize::new(size.0, size.1))
-            .build(&event_loop)
-            .map_err(|e| format!("window: {e}"))?;
+        .with_inner_size(LogicalSize::new(size.0, size.1))
+        .build(&event_loop)
+        .map_err(|e| format!("window: {e}"))?;
 
-        // Linux hosts the webview inside the GTK window; other platforms
-        // attach it through the plain window handle.
+        // Linux: attach into tao's own vbox — packing the webview straight
+        // into the top-level window collides with tao's internal layout and
+        // yields a blank surface. wry packs into a GtkBox with
+        // pack_start(fill=true), so it fills and tracks resizes.
         #[allow(unused_variables)]
         let window_ref = &window;
         let _webview = {
             #[cfg(target_os = "linux")]
             {
-                use tao::platform::unix::WindowExtUnix;
                 use wry::WebViewBuilderExtUnix;
+                let vbox = window_ref.default_vbox().ok_or("no default vbox")?;
                 WebViewBuilder::new()
                     .with_url(url)
-                    .build_gtk(window_ref.gtk_window())
+                    .build_gtk(vbox)
                     .map_err(|e| format!("webview: {e}"))?
             }
             #[cfg(not(target_os = "linux"))]
@@ -156,6 +161,14 @@ impl SimpleTransporter for WebViewTransporter {
             .cloned()
             .unwrap_or_else(|| format!("appcast — {url}"));
         let size = Self::parse_size(&config)?;
+
+        // WebKitGTK's DMABUF renderer blanks out on GPUs/drivers without
+        // proper DRI3 (VMs, Xvfb, some NVIDIA setups). Default to the
+        // software-safe path unless the user explicitly opted otherwise.
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
 
         // The GTK/WinUI event loops dislike foreign threads re-entering;
         // give the session one dedicated thread of its own and block this
