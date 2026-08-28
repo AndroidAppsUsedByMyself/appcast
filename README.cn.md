@@ -41,7 +41,7 @@ scrcpy -s <目标> \
 nix run github:AndroidAppsUsedByMyself/appcast -- --help
 ```
 
-### Debian / Ubuntu（apt 源）
+### Debian / Ubuntu
 
 ```bash
 echo "deb [trusted=yes] https://androidappsusedbymyself.github.io/appcast/debian stable main" \
@@ -53,17 +53,37 @@ sudo apt update && sudo apt install appcast
 
 ```bash
 echo "deb [trusted=yes] https://androidappsusedbymyself.github.io/appcast/termux stable main" \
-  >> $PREFIX/etc/apt/sources.list
+  > $PREFIX/etc/apt/sources.list.d/appcast.list
 pkg update && pkg install appcast
 ```
 
-也可从 [Releases](https://github.com/AndroidAppsUsedByMyself/appcast/releases)
-直接下载 `termux-<arch>.deb` 手动安装。
+也可手动添加源——见 [scripts/termux/appcast.list](scripts/termux/appcast.list)。
+`termux-<arch>.deb` 也可从 [Releases](https://github.com/AndroidAppsUsedByMyself/appcast/releases)
+直接下载。
 
 ### Windows
 
 从 [Releases](https://github.com/AndroidAppsUsedByMyself/appcast/releases)
 下载 `windows-x86_64.exe`（静态 CRT，无需 DLL；首次运行 SmartScreen 可能告警）。
+
+### NixOS（声明式）
+
+```nix
+# flake.nix
+inputs.appcast.url = "github:AndroidAppsUsedByMyself/appcast";
+
+# configuration.nix
+imports = [ inputs.appcast.nixosModules.default ];
+nixpkgs.overlays = [ inputs.appcast.overlays.default ];
+programs.appcast = {
+  enable = true;
+  plugins = [ pkgs.appcast-tpt-webview ];
+};
+```
+
+完整模块参考见 [nixos/module.nix](nixos/module.nix)。
+插件通过 `programs.appcast.plugins` 声明；wrapper 保证系统插件在用户级
+`$APPCAST_TRANSPORTER_DIR` 之后被搜索。
 
 ## 使用
 
@@ -208,7 +228,8 @@ GUI 链接成员的 workspace 级命令须进对应 shell（如 `nix develop
 构建出的插件 `.so` 通过 Nix store rpath 直接链到 WebKitGTK 运行时，
 任何环境都能 dlopen，无需 `LD_LIBRARY_PATH`。
 
-声明式系统级安装：
+声明式系统级安装——完整模块参考见 [nixos/module.nix](nixos/module.nix)，
+或在 flake 中添加：
 
 ```nix
 # flake.nix
@@ -219,7 +240,7 @@ imports = [ inputs.appcast.nixosModules.default ];
 nixpkgs.overlays = [ inputs.appcast.overlays.default ];
 programs.appcast = {
   enable = true;
-  plugins = [ pkgs.appcast-tpt-webview ];  # 或 programs.appcast.package = pkgs.appcast;
+  plugins = [ pkgs.appcast-tpt-webview ];
 };
 ```
 

@@ -41,7 +41,7 @@ No manual display bookkeeping, no `am start` permission pitfalls.
 nix run github:AndroidAppsUsedByMyself/appcast -- --help
 ```
 
-### Debian / Ubuntu (apt repository)
+### Debian / Ubuntu
 
 ```bash
 echo "deb [trusted=yes] https://androidappsusedbymyself.github.io/appcast/debian stable main" \
@@ -53,11 +53,12 @@ sudo apt update && sudo apt install appcast
 
 ```bash
 echo "deb [trusted=yes] https://androidappsusedbymyself.github.io/appcast/termux stable main" \
-  >> $PREFIX/etc/apt/sources.list
+  > $PREFIX/etc/apt/sources.list.d/appcast.list
 pkg update && pkg install appcast
 ```
 
-Or grab `termux-<arch>.deb` directly from
+Or add the source manually — see [scripts/termux/appcast.list](scripts/termux/appcast.list).
+`termux-<arch>.deb` files are also available from
 [Releases](https://github.com/AndroidAppsUsedByMyself/appcast/releases).
 
 ### Windows
@@ -65,6 +66,25 @@ Or grab `termux-<arch>.deb` directly from
 Download `windows-x86_64.exe` from
 [Releases](https://github.com/AndroidAppsUsedByMyself/appcast/releases)
 (static CRT, no DLLs; SmartScreen may warn on first run).
+
+### NixOS (declarative)
+
+```nix
+# flake.nix
+inputs.appcast.url = "github:AndroidAppsUsedByMyself/appcast";
+
+# configuration.nix
+imports = [ inputs.appcast.nixosModules.default ];
+nixpkgs.overlays = [ inputs.appcast.overlays.default ];
+programs.appcast = {
+  enable = true;
+  plugins = [ pkgs.appcast-tpt-webview ];
+};
+```
+
+See [nixos/module.nix](nixos/module.nix) for the full module
+reference. Plugins are declared via `programs.appcast.plugins`; the wrapper
+ensures system plugins are found after any per-user `$APPCAST_TRANSPORTER_DIR`.
 
 ## Usage
 
@@ -233,7 +253,8 @@ cargo test --workspace`); the bare shell covers core + SDK via workspace
 Built plugin `.so` files carry Nix store rpaths to their WebKitGTK
 runtime, so they load anywhere — no `LD_LIBRARY_PATH` needed.
 
-Declarative system-wide install:
+Declarative system-wide install — see [nixos/module.nix](nixos/module.nix)
+for the full module, or add to your flake:
 
 ```nix
 # flake.nix
@@ -244,7 +265,7 @@ imports = [ inputs.appcast.nixosModules.default ];
 nixpkgs.overlays = [ inputs.appcast.overlays.default ];
 programs.appcast = {
   enable = true;
-  plugins = [ pkgs.appcast-tpt-webview ];  # or programs.appcast.package = pkgs.appcast;
+  plugins = [ pkgs.appcast-tpt-webview ];
 };
 ```
 
