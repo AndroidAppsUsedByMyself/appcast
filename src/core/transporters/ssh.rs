@@ -13,6 +13,10 @@ impl Transporter for LinuxX11Transporter {
         "ssh-x11"
     }
 
+    fn description(&self) -> &'static str {
+        "Remote Linux X11 app forwarded over SSH (not yet implemented)"
+    }
+
     fn run<'a>(&'a self, _config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {
         Box::pin(async { Err(AppError::NotImplemented("ssh-x11 backend".into())) })
     }

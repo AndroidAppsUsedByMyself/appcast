@@ -13,6 +13,10 @@ impl Transporter for WaylandTransporter {
         "waypipe"
     }
 
+    fn description(&self) -> &'static str {
+        "Remote Wayland app forwarded via waypipe (not yet implemented)"
+    }
+
     fn run<'a>(&'a self, _config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {
         Box::pin(async { Err(AppError::NotImplemented("waypipe backend".into())) })
     }

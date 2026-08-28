@@ -44,6 +44,10 @@
 //! impl SimpleTransporter for Echo {
 //!     fn name(&self) -> &'static str { "echo" }
 //!
+//!     fn description(&self) -> &'static str {
+//!         "Demo echo plugin for testing"
+//!     }
+//!
 //!     fn run(&self, _config: ConfigSnapshot) -> Result<(), String> {
 //!         eprintln!("echo would cast now");
 //!         Ok(())
@@ -134,6 +138,10 @@ pub trait SimpleTransporter: Send + Sync {
     /// Registry name of this transporter (e.g. `"web-webview"`).
     fn name(&self) -> &'static str;
 
+    /// One-line human-readable summary of what this transporter does.
+    /// Displayed by `appcast transporters` and in `--json` output.
+    fn description(&self) -> &'static str;
+
     /// Run one full casting session. Return `Err` only for genuine
     /// failures; normal session end (window closed, user interrupt) is
     /// `Ok(())`.
@@ -162,6 +170,8 @@ macro_rules! export_appcast_transporter {
         > = ::std::sync::OnceLock::new();
         static NAME: ::std::sync::OnceLock<::std::ffi::CString> =
             ::std::sync::OnceLock::new();
+        static DESCRIPTION: ::std::sync::OnceLock<::std::ffi::CString> =
+            ::std::sync::OnceLock::new();
 
         fn instance() -> &'static dyn $crate::SimpleTransporter {
             INSTANCE
@@ -181,6 +191,16 @@ macro_rules! export_appcast_transporter {
             NAME.get_or_init(|| {
                 ::std::ffi::CString::new(instance().name())
                     .expect("transporter name contains no NUL")
+            })
+            .as_ptr()
+        }
+
+        /// One-line human-readable description of this transporter.
+        #[no_mangle]
+        extern "C" fn appcast_tpt_description() -> *const ::std::os::raw::c_char {
+            DESCRIPTION.get_or_init(|| {
+                ::std::ffi::CString::new(instance().description())
+                    .expect("transporter description contains no NUL")
             })
             .as_ptr()
         }

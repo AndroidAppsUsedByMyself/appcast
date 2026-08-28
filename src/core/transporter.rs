@@ -88,6 +88,11 @@ pub trait Transporter: Send + Sync {
     /// Registry name of this protocol (e.g. `"adb"`).
     fn name(&self) -> &'static str;
 
+    /// One-line human-readable summary: what this backend does, what it
+    /// shells out to, and any notable constraints. Displayed by
+    /// `appcast transporters` and in `--json` output.
+    fn description(&self) -> &'static str;
+
     /// Run one full casting session: verify the target, launch the app on a
     /// virtual display, mirror it, and clean up on any exit path.
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>>;

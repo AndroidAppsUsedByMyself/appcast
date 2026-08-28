@@ -39,6 +39,7 @@ const PLUGIN_FILE_STEM: &str = "appcast_tpt_";
 // C ABI v1 signatures — must mirror sdk/appcast-plugin exactly.
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
 type NameFn = unsafe extern "C" fn() -> *const c_char;
+type DescriptionFn = unsafe extern "C" fn() -> *const c_char;
 type RunFn = unsafe extern "C" fn(*const c_char) -> i32;
 type ListAppsFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 type FreeStringFn = unsafe extern "C" fn(*mut c_char);
@@ -127,6 +128,8 @@ fn discover_in(dirs: &[PathBuf]) -> Vec<PathBuf> {
 struct DynamicTransporter {
     /// Registry name reported by the plugin itself.
     name: String,
+    /// One-line description reported by the plugin.
+    description: String,
     _library: Library,
     abi_version: u32,
     run_fn: RunFn,
@@ -185,8 +188,26 @@ impl DynamicTransporter {
             (*run_fn, *list_apps_fn, *free_string_fn)
         };
 
+        // Optional in older ABI versions; absent → empty string.
+        let description = {
+            let desc_fn: Result<libloading::Symbol<DescriptionFn>, _> =
+                unsafe { library.get(b"appcast_tpt_description\0") };
+            match desc_fn {
+                Ok(f) => {
+                    let ptr = unsafe { f() };
+                    if ptr.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned()
+                    }
+                }
+                Err(_) => String::new(),
+            }
+        };
+
         Ok(Self {
             name,
+            description,
             _library: library,
             abi_version,
             run_fn,
@@ -210,6 +231,10 @@ impl Transporter for DynamicTransporter {
         // The trait promises 'static; plugin names live for the process
         // anyway, so leak once per loaded plugin (bounded by plugin count).
         Box::leak(self.name.clone().into_boxed_str())
+    }
+
+    fn description(&self) -> &'static str {
+        Box::leak(self.description.clone().into_boxed_str())
     }
 
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {

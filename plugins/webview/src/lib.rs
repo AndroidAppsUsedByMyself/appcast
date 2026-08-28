@@ -193,6 +193,10 @@ impl SimpleTransporter for WebViewTransporter {
         "web-webview"
     }
 
+    fn description(&self) -> &'static str {
+        "Embedded WebView (WebKitGTK / WebView2 / WKWebView) in a native window"
+    }
+
     fn run(&self, config: ConfigSnapshot) -> Result<(), String> {
         const USAGE: &str = "appcast run web-webview <https-url>";
         let url = config

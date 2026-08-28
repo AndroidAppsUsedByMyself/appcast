@@ -51,6 +51,7 @@ impl std::fmt::Display for Origin {
 struct Registered {
     entry: Entry,
     origin: Origin,
+    description: String,
 }
 
 /// Maps protocol names (`"adb-scrcpy"`, ...) to transporter sources.
@@ -67,16 +68,19 @@ impl TransporterRegistry {
     }
 
     /// Register a built-in factory under `name`; later registration
-    /// overwrites.
+    /// overwrites. The factory is invoked once to obtain the description.
     pub fn register<F>(&mut self, name: &str, factory: F)
     where
         F: Fn() -> Box<dyn Transporter> + Send + Sync + 'static,
     {
+        let instance = (factory)();
+        let description = instance.description().to_string();
         self.registrations.insert(
             name.to_string(),
             Registered {
                 entry: Entry::Factory(Box::new(factory)),
                 origin: Origin::BuiltIn,
+                description,
             },
         );
     }
@@ -89,11 +93,13 @@ impl TransporterRegistry {
         instance: Arc<dyn Transporter>,
         path: PathBuf,
     ) {
+        let description = instance.description().to_string();
         self.registrations.insert(
             name.to_string(),
             Registered {
                 entry: Entry::Ready(instance),
                 origin: Origin::Plugin(path),
+                description,
             },
         );
     }
@@ -105,13 +111,16 @@ impl TransporterRegistry {
         names
     }
 
-    /// Every registration as `(name, origin)`, sorted by name — the data
-    /// behind the `transporters` command's provenance listing.
-    pub fn entries(&self) -> Vec<(String, Origin)> {
-        let mut entries: Vec<(String, Origin)> = self
+    /// Every registration as `(name, description, origin)`, sorted by
+    /// name — the data behind the `transporters` command's provenance
+    /// listing.
+    pub fn entries(&self) -> Vec<(String, String, Origin)> {
+        let mut entries: Vec<(String, String, Origin)> = self
             .registrations
             .iter()
-            .map(|(name, reg)| (name.clone(), reg.origin.clone()))
+            .map(|(name, reg)| {
+                (name.clone(), reg.description.clone(), reg.origin.clone())
+            })
             .collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries

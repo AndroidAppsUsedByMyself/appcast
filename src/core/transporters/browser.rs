@@ -237,6 +237,10 @@ impl Transporter for WebBrowserTransporter {
         "web-browser"
     }
 
+    fn description(&self) -> &'static str {
+        "System browser in app mode — Chromium --app or Firefox kiosk"
+    }
+
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {
         Box::pin(async move {
             const USAGE: &str = "appcast run web-browser <https-url>";

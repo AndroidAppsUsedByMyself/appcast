@@ -119,7 +119,15 @@ pub enum Command {
     /// Print the fully merged command line without executing anything.
     Snapshot(RunArgs),
     /// List installed transporters (built-in backends and plugins).
-    Transporters,
+    Transporters(TransportersArgs),
+}
+
+/// Extra flags for `appcast transporters`.
+#[derive(Debug, Args)]
+pub struct TransportersArgs {
+    /// Output as JSON (one object per transporter).
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Shared argument surface of `run` and `snapshot`.
@@ -309,7 +317,7 @@ pub async fn run_cli() -> anyhow::Result<()> {
         Command::Snapshot(args) => cmd_snapshot(args).await,
         Command::List(args) => cmd_list(args).await,
         Command::Profile { action } => cmd_profile(action).await,
-        Command::Transporters => cmd_transporters(),
+        Command::Transporters(args) => cmd_transporters(args),
     }
 }
 
@@ -323,19 +331,39 @@ async fn cmd_run(args: RunArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_transporters() -> anyhow::Result<()> {
+fn cmd_transporters(args: TransportersArgs) -> anyhow::Result<()> {
     let registry = transporters::build_registry();
-    for (name, origin) in registry.entries() {
-        println!("{name:<14} {origin}");
-    }
-    // Make "why isn't my plugin loading" diagnosable from the command
-    // itself: show every dir that was scanned, in priority order.
-    let dirs = crate::core::plugins::search_dirs();
-    if !dirs.is_empty() {
-        println!();
-        println!("plugin dirs (later overrides earlier):");
-        for dir in &dirs {
-            println!("  {}", dir.display());
+
+    if args.json {
+        let entries: Vec<serde_json::Value> = registry
+            .entries()
+            .iter()
+            .map(|(name, desc, origin)| {
+                serde_json::json!({
+                    "name": name,
+                    "description": desc,
+                    "origin": origin.to_string(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        for (name, desc, origin) in registry.entries() {
+            if desc.is_empty() {
+                println!("{name:<14} {origin}");
+            } else {
+                println!("{name:<14} {desc} ({origin})");
+            }
+        }
+        // Make "why isn't my plugin loading" diagnosable from the command
+        // itself: show every dir that was scanned, in priority order.
+        let dirs = crate::core::plugins::search_dirs();
+        if !dirs.is_empty() {
+            println!();
+            println!("plugin dirs (later overrides earlier):");
+            for dir in &dirs {
+                println!("  {}", dir.display());
+            }
         }
     }
     Ok(())

@@ -279,6 +279,10 @@ impl Transporter for AdbScrcpyTransporter {
         "adb"
     }
 
+    fn description(&self) -> &'static str {
+        "Scrcpy virtual-display pipeline for Android apps (adb + scrcpy >= 3.0)"
+    }
+
     fn run<'a>(&'a self, config: &'a ResolvedConfig) -> BoxFut<'a, Result<(), AppError>> {
         Box::pin(async move {
             // This backend's addressing schema: both slots are required.
